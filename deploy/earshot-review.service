@@ -1,0 +1,18 @@
+# Always-on review page for earshot (http://localhost:8790/, 127.0.0.1 only).
+# Install: ln -s ~/projects/earshot/deploy/earshot-review.service ~/.config/systemd/user/
+#          systemctl --user daemon-reload && systemctl --user enable --now earshot-review
+# The server rejects non-localhost Host headers and cross-site writes (review/server.py).
+[Unit]
+Description=earshot review page (localhost:8790)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/earshot
+ExecStart=/usr/bin/python3 -I %h/projects/earshot/review/server.py --port 8790
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target

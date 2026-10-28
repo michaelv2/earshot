@@ -1,0 +1,21 @@
+# Audio, transcripts and state — never commit
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.opus
+*.flac
+*.rttm
+*.db
+folders.csv
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Secrets
+.env
+tokens.json

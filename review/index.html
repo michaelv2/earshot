@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordings Review</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e3e3e0;
+  --accent: #2f6fde; --accent-soft: #e8f0fd; --ok: #1f8a4c; --warn: #b26a00; --hl: #fff4cc;
+  --s0: #2f6fde; --s1: #c2410c; --s2: #15803d; --s3: #7c3aed; --s4: #be185d; --s5: #0e7490; --s6: #a16207; --s7: #4b5563;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161618; --panel: #1f1f22; --text: #ececee; --muted: #9a9aa2; --line: #313136;
+    --accent: #6ea0ff; --accent-soft: #23314d; --ok: #4ade80; --warn: #fbbf24; --hl: #3a3420;
+    --s0: #6ea0ff; --s1: #fb923c; --s2: #4ade80; --s3: #a78bfa; --s4: #f472b6; --s5: #22d3ee; --s6: #facc15; --s7: #a1a1aa;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; height: 100vh; display: flex; flex-direction: column; }
+header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0 8px 0 0; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tabs button { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 999px; padding: 3px 10px; cursor: pointer; font: inherit; }
+.tabs button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.tabs .n { color: var(--muted); margin-left: 4px; font-size: 12px; }
+#search { margin-left: auto; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; width: 220px; }
+main { flex: 1; display: grid; grid-template-columns: minmax(260px, 340px) 1fr; min-height: 0; }
+#list { overflow-y: auto; border-right: 1px solid var(--line); background: var(--panel); }
+.item { padding: 9px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.item:hover { background: var(--bg); }
+.item.sel { background: var(--accent-soft); }
+.item .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .t.none { color: var(--muted); font-weight: 500; font-style: italic; }
+.item .m { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.badge { font-size: 11px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--line); }
+.badge.unfiled { color: var(--warn); border-color: currentColor; }
+.cat.unfiled { background: transparent; color: var(--warn); border: 1px solid currentColor; }
+.cat.discard { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.st-diarized { color: var(--ok); } .st-transcribed { color: var(--warn); } .st-none, .st-no-audio { color: var(--muted); }
+#detail { overflow-y: auto; padding: 16px 22px 40px; }
+.empty { color: var(--muted); padding: 40px; text-align: center; }
+.titlerow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+#title { flex: 1; min-width: 240px; font: 600 20px/1.3 inherit; font-family: inherit; padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text); }
+#title:hover { border-color: var(--line); } #title:focus { border-color: var(--accent); outline: none; background: var(--panel); }
+select, .btn { font: inherit; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; }
+.btn:hover { border-color: var(--accent); } .btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.saved { color: var(--ok); font-size: 12px; opacity: 0; transition: opacity .3s; } .saved.show { opacity: 1; }
+.meta { color: var(--muted); font-size: 12px; margin: 4px 8px 14px; display: flex; gap: 12px; flex-wrap: wrap; }
+.meta a { color: var(--accent); }
+.player { position: sticky; top: -16px; z-index: 2; background: var(--bg); padding: 10px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+audio { flex: 1; min-width: 280px; height: 40px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 8px; }
+.spk { display: grid; grid-template-columns: 14px 96px minmax(140px, 260px) 80px auto; gap: 10px; align-items: center; padding: 4px 0; }
+.dot { width: 12px; height: 12px; border-radius: 50%; }
+.spk input { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+.spk .lbl, .spk .dur { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.note { color: var(--muted); font-size: 13px; }
+.notice { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 6px; padding: 8px 12px; margin: 10px 0; display: flex; gap: 10px; align-items: center; }
+#utts { margin-top: 6px; }
+.u { display: grid; grid-template-columns: 64px 120px 1fr; gap: 10px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+.u:hover { background: var(--panel); }
+.u.now { background: var(--hl); }
+.u .ts { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 2px; }
+.u .who { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 1px; }
+.dtabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-top: 14px; }
+.dtabs button { font: inherit; font-weight: 600; padding: 7px 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); cursor: pointer; margin-bottom: -1px; }
+.dtabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.dtabs button:hover { color: var(--text); }
+.md { max-width: 78ch; padding-top: 6px; }
+.md h2, .md h3, .md h4, .md h5 { margin: 20px 0 8px; line-height: 1.3; }
+.md h2 { font-size: 20px; text-transform: none; letter-spacing: 0; color: var(--text); }
+.md h3 { font-size: 16px; } .md h4, .md h5 { font-size: 14px; }
+.md p { margin: 8px 0; }
+.md ul { margin: 4px 0 8px; padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md li.task { list-style: none; margin-left: -20px; }
+.md li.task input { margin: 0 6px 0 0; vertical-align: -1px; }
+.md code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.has-sum { color: var(--accent); }
+.item .t.sug { font-style: italic; font-weight: 500; color: var(--muted); }
+.cat { font-size: 11px; padding: 0 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.brief { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 10px 14px; margin: 0 0 10px; max-width: 90ch; }
+.brief-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.brief-head .cat { font-size: 12px; padding: 1px 9px; }
+.brief .sugt { font-weight: 600; }
+.brief p { margin: 8px 0 4px; }
+.brief ul { margin: 4px 0; padding-left: 20px; }
+.brief li { margin: 2px 0; }
+.brief .src { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.keys { color: var(--muted); font-size: 12px; margin-top: 24px; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-size: 11px; }
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 40vh 1fr; }
+  #list { border-right: 0; border-bottom: 1px solid var(--line); }
+  #search { width: 100%; margin-left: 0; }
+  .u { grid-template-columns: 56px 1fr; } .u .who { grid-column: 2; } .u .tx { grid-column: 1 / -1; }
+  .spk { grid-template-columns: 14px 1fr 70px; } .spk .lbl { display: none; } .spk button { grid-column: 2; justify-self: start; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Recordings</h1>
+  <div class="tabs" id="tabs"></div>
+  <input id="search" type="search" placeholder="Search titles  ( / )">
+</header>
+<main>
+  <nav id="list"></nav>
+  <section id="detail"><div class="empty">Pick a recording on the left.</div></section>
+</main>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") n.className = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if (k === "text") n.textContent = v;
+    else n.setAttribute(k, v);
+  }
+  for (const c of kids) if (c != null) n.append(c);
+  return n;
+}
+const api = async (path, opts = {}) => {
+  const r = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", "X-Earshot": "1" } });
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json();
+};
+const hms = (t) => { t = Math.max(0, Math.floor(t)); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0"); };
+const mins = (m) => m >= 60 ? `${Math.floor(m / 60)} h ${Math.round(m % 60)} min` : `${Math.round(m)} min`;
+const fmtDate = (s) => { const d = new Date(s.replace(" ", "T"));
+  return isNaN(d) ? s : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) + " · " + s.slice(11, 16); };
+// The "All" tab hides discarded recordings; they're only listed under Discard.
+const visible = (r, f) => f === "all" ? r.folder !== "discard" : r.folder === f;
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+const STATUS = { diarized: "Diarized", transcribed: "Transcribed, no speakers yet", none: "Not transcribed", "no audio": "No audio" };
+
+let state = { folders: [], recs: [], filter: "all", q: "", sel: null, detail: null, follow: true, tab: "transcript" };
+try { state.tab = localStorage.getItem("review.tab") || state.tab; } catch {}
+const audio = new Audio(); audio.preload = "metadata";
+let sampleStop = null, nowIdx = -1;
+
+// ---------- list ----------
+async function loadList() {
+  const d = await api("/api/recordings");
+  state.folders = d.folders; state.recs = d.recordings;
+  renderTabs(); renderList();
+  if (state.sel && state.detail) {
+    const r = state.recs.find((x) => x.id === state.sel);
+    if (r && r.status !== state.detail.status) transcriptChanged();
+  }
+}
+function renderTabs() {
+  const count = (f) => state.recs.filter((r) => visible(r, f)).length;
+  $("#tabs").replaceChildren(...["all", ...state.folders].map((f) =>
+    el("button", { class: state.filter === f ? "on" : "", onclick: () => { state.filter = f; renderTabs(); renderList(); } },
+      cap(f), el("span", { class: "n", text: String(count(f)) }))));
+}
+function renderList() {
+  const q = state.q.toLowerCase();
+  const recs = state.recs.filter((r) => visible(r, state.filter) &&
+    (!q || [r.title, r.plaud_name, r.start, r.brief?.title, r.brief?.topic].join(" ").toLowerCase().includes(q)));
+  $("#list").replaceChildren(...recs.map((r) => el("div", { class: "item" + (r.id === state.sel ? " sel" : ""), onclick: () => select(r.id) },
+    r.title ? el("div", { class: "t", text: r.title })
+      : r.brief?.title ? el("div", { class: "t sug", text: r.brief.title, title: "Suggested title" })
+      : el("div", { class: "t none", text: "Untitled" }),
+    el("div", { class: "m" },
+      el("span", { class: "cat" + (["unfiled", "discard"].includes(r.folder) ? " " + r.folder : ""), text: r.folder }),
+      el("span", { text: fmtDate(r.start) }), el("span", { text: mins(r.duration_min) }),
+      el("span", { class: "st-" + r.status.replace(" ", "-"), text: r.status === "diarized"
+        ? `${r.speakers_named}/${r.speakers} speakers named` : STATUS[r.status] }),
+      r.has_summary ? el("span", { class: "has-sum", text: "Summary" }) : null))));
+  if (!recs.length) $("#list").append(el("div", { class: "empty", text: "Nothing here." }));
+}
+$("#search").addEventListener("input", (e) => { state.q = e.target.value; renderList(); });
+
+// ---------- detail ----------
+async function select(id, keepTime = false) {
+  const t = keepTime ? audio.currentTime : 0;
+  state.sel = id; renderList();
+  const d = await api(`/api/recordings/${id}`);
+  if (state.sel !== id) return;
+  state.detail = d; nowIdx = -1;
+  if (!keepTime) { audio.pause(); audio.src = `/audio/${id}`; }
+  renderDetail();
+  if (keepTime) audio.currentTime = t;
+  if (!d.title && !keepTime) $("#title").focus();
+}
+function colorMap(d) {
+  const keys = [], map = {};
+  for (const s of d.speakers) { const k = (s.name || s.label).toLowerCase(); if (!keys.includes(k)) keys.push(k); }
+  for (const s of d.speakers) map[s.label] = `var(--s${keys.indexOf((s.name || s.label).toLowerCase()) % 8})`;
+  return map;
+}
+function renderDetail() {
+  const d = state.detail, colors = colorMap(d);
+  const names = Object.fromEntries(d.speakers.map((s) => [s.label, s.name || s.label]));
+  const saved = el("span", { class: "saved", text: "Saved" });
+  const flash = () => { saved.classList.add("show"); setTimeout(() => saved.classList.remove("show"), 1200); };
+  const save = async (patch) => { await api(`/api/recordings/${d.id}`, { method: "PATCH", body: JSON.stringify(patch) }); flash(); };
+
+  const title = el("input", { id: "title", value: d.title, placeholder: "Add a title…", maxlength: "200", "aria-label": "Title" });
+  title.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); title.blur(); } if (e.key === "Escape") { title.value = d.title; title.blur(); } });
+  title.addEventListener("change", async () => {
+    const v = title.value.trim(); d.title = v; await save({ title: v });
+    const r = state.recs.find((x) => x.id === d.id); if (r) r.title = v; renderList();
+  });
+  const setFolder = async (f) => {
+    d.folder = f; await save({ folder: f });
+    const r = state.recs.find((x) => x.id === d.id); if (r) r.folder = f;
+    renderTabs(); renderList(); renderDetail();
+  };
+  const folder = el("select", { "aria-label": "Category", title: "Category", onchange: (e) => setFolder(e.target.value) },
+    ...state.folders.map((f) => { const o = el("option", { value: f, text: f }); if (f === d.folder) o.selected = true; return o; }));
+  // Discard keeps the audio and transcript but hides the recording and marks it as not worth a summary.
+  state.toggleDiscard = () => setFolder(d.folder === "discard" ? "unfiled" : "discard");
+  const discard = el("button", { class: "btn", onclick: () => state.toggleDiscard(),
+    text: d.folder === "discard" ? "Restore" : "Discard",
+    title: d.folder === "discard" ? "Move back to unfiled (D)" : "Hide it and skip summaries; the audio is kept (D)" });
+
+  // Triage brief from brief.py: suggested title and topic, plus a very short summary. Its category
+  // is applied automatically at ingest, so it's only shown here if it differs from the current one.
+  const b = d.brief_full;
+  const briefEl = b ? el("div", { class: "brief" },
+    el("div", { class: "brief-head" },
+      b.title ? el("span", { class: "sugt", text: b.title }) : null,
+      b.topic ? el("span", { class: "note", text: b.topic }) : null,
+      b.title && b.title !== d.title ? el("button", { class: "btn", text: "Use title", onclick: (e) => {
+        title.value = b.title; title.dispatchEvent(new Event("change")); e.target.remove(); } }) : null,
+      b.category && b.category !== d.folder ? el("span", { class: "note", text: `Suggested category: ${b.category}` }) : null),
+    el("p", { text: b.summary }),
+    b.takeaways?.length ? el("ul", {}, ...b.takeaways.map((t) => el("li", { text: t }))) : null,
+    el("div", { class: "src", text: `Suggested by ${b.model}` })) : null;
+
+  const speeds = [1, 1.25, 1.5, 2].map((s) => el("button", { class: "btn" + (audio.playbackRate === s ? " on" : ""), text: s + "×",
+    onclick: (e) => { audio.playbackRate = s; e.target.parentNode.querySelectorAll(".btn[data-s]").forEach((b) => b.classList.toggle("on", +b.dataset.s === s)); },
+    "data-s": String(s) }));
+  const follow = el("button", { class: "btn" + (state.follow ? " on" : ""), text: "Follow", title: "Keep the current line in view",
+    onclick: (e) => { state.follow = !state.follow; e.target.classList.toggle("on", state.follow); } });
+
+  const spk = d.speakers.length ? d.speakers.map((s) => {
+    const inp = el("input", { value: s.name, placeholder: "Name or role", maxlength: "80", "aria-label": `Name for ${s.label}` });
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") inp.blur(); });
+    inp.addEventListener("change", async () => {
+      s.name = inp.value.trim(); await save({ speakers: { [s.label]: s.name } });
+      const r = state.recs.find((x) => x.id === d.id);
+      if (r) { r.speakers_named = d.speakers.filter((x) => x.name).length; renderList(); }
+      renderDetail();
+    });
+    return el("div", { class: "spk" },
+      el("span", { class: "dot", style: `background:${colors[s.label]}` }),
+      el("span", { class: "lbl", text: s.label }), inp,
+      el("span", { class: "dur", text: mins(s.seconds / 60) }),
+      el("button", { class: "btn", text: "▶ Sample", title: "Play this speaker's longest stretch", onclick: () => playSample(s.sample) }));
+  }) : [el("p", { class: "note", text: d.status === "transcribed" ? "Speakers appear once diarization finishes." : "No transcript yet." })];
+
+  const utts = el("div", { id: "utts" }, ...d.utterances.map((u, i) => el("div", { class: "u", "data-i": String(i), onclick: () => { audio.currentTime = u.start; audio.play(); } },
+    el("span", { class: "ts", text: hms(u.start) }),
+    el("span", { class: "who", style: u.speaker ? `color:${colors[u.speaker]}` : "", text: u.speaker ? names[u.speaker] : "" }),
+    el("span", { class: "tx", text: u.text }))));
+
+  const panels = {
+    transcript: el("div", { id: "p-transcript" },
+      el("h2", { text: "Speakers" }), ...spk,
+      el("h2", { text: "Transcript" }),
+      d.utterances.length ? utts : el("p", { class: "note", text: "No transcript yet." })),
+    summary: el("div", { id: "p-summary" },
+      d.summary ? renderMarkdown(d.summary) : el("p", { class: "note", text: "No summary yet." })),
+  };
+  const tabBar = el("div", { class: "dtabs", role: "tablist" }, ...Object.keys(panels).map((k) =>
+    el("button", { role: "tab", "data-tab": k, text: k === "summary" && !d.summary ? "Summary (none)" : k[0].toUpperCase() + k.slice(1),
+      onclick: () => showTab(k) })));
+  const showTab = (k) => {
+    state.tab = k; try { localStorage.setItem("review.tab", k); } catch {}
+    for (const [name, panel] of Object.entries(panels)) panel.hidden = name !== k;
+    tabBar.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b.dataset.tab === k); b.setAttribute("aria-selected", String(b.dataset.tab === k)); });
+  };
+
+  $("#detail").replaceChildren(
+    el("div", { class: "titlerow" }, title, folder, discard, saved),
+    el("div", { class: "meta" },
+      el("span", { text: fmtDate(d.start) }), el("span", { text: mins(d.duration_min) }),
+      d.plaud_name ? el("span", { text: "Plaud: " + d.plaud_name }) : null,
+      el("span", { text: d.id }),
+      d.utterances.length ? el("a", { href: `/api/recordings/${d.id}/transcript.txt`, text: "Download transcript" }) : null),
+    briefEl,
+    el("div", { class: "player" }, audio, ...speeds, follow),
+    el("div", { id: "notice" }),
+    tabBar, panels.transcript, panels.summary,
+    el("div", { class: "keys" }, "Keys: ", el("kbd", { text: "Space" }), " play/pause · ", el("kbd", { text: "←" }), " ", el("kbd", { text: "→" }),
+      " 5 s (", el("kbd", { text: "Shift" }), " 30 s) · ", el("kbd", { text: "N" }), " next untitled · ", el("kbd", { text: "T" }), " title · ", el("kbd", { text: "D" }), " discard · ", el("kbd", { text: "/" }), " search"));
+  audio.controls = true;
+  showTab(panels[state.tab] ? state.tab : "transcript");
+}
+
+// ---------- summary markdown ----------
+// A small subset (headings, paragraphs, nested and task lists, bold, italic, code), built as DOM
+// nodes with text content only, so nothing in a summary is ever interpreted as HTML.
+function inline(text) {
+  const out = [], re = /\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(m[1] != null ? el("strong", { text: m[1] }) : m[2] != null ? el("code", { text: m[2] }) : el("em", { text: m[3] }));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+function renderMarkdown(md) {
+  const root = el("div", { class: "md" });
+  let para = [], lists = [];  // lists: stack of { indent, ul, last }
+  const flush = () => { if (para.length) root.append(el("p", {}, ...inline(para.join(" ")))); para = []; };
+  for (const raw of md.replace(/\r\n?/g, "\n").split("\n")) {
+    const line = raw.replace(/\s+$/, "");
+    let m;
+    if (!line) { flush(); lists = []; }
+    else if ((m = line.match(/^(#{1,4})\s+(.*)$/))) { flush(); lists = []; root.append(el("h" + (m[1].length + 1), {}, ...inline(m[2]))); }
+    else if ((m = line.match(/^(\s*)[-*]\s+(?:\[([ xX])\]\s+)?(.*)$/))) {
+      flush();
+      const indent = m[1].length;
+      while (lists.length && lists.at(-1).indent > indent) lists.pop();
+      if (!lists.length || lists.at(-1).indent < indent) {
+        const ul = el("ul");
+        (lists.at(-1)?.last ?? root).append(ul);
+        lists.push({ indent, ul, last: null });
+      }
+      const li = el("li", m[2] != null ? { class: "task" } : {});
+      if (m[2] != null) { const cb = el("input", { type: "checkbox", disabled: "" }); cb.checked = m[2] !== " "; li.append(cb); }
+      li.append(...inline(m[3]));
+      lists.at(-1).ul.append(li); lists.at(-1).last = li;
+    }
+    else if (lists.length && /^\s/.test(line) && lists.at(-1).last) lists.at(-1).last.append(" ", ...inline(line.trim()));
+    else { lists = []; para.push(line.trim()); }
+  }
+  flush();
+  return root;
+}
+function transcriptChanged() {
+  if (audio.paused) return select(state.sel, true);
+  $("#notice").replaceChildren(el("div", { class: "notice" }, "The transcript has been updated.",
+    el("button", { class: "btn", text: "Reload", onclick: () => select(state.sel, true) })));
+}
+function playSample([start, end]) {
+  clearTimeout(sampleStop);
+  audio.currentTime = start; audio.play();
+  sampleStop = setTimeout(() => audio.pause(), Math.min(end - start, 12) * 1000 / audio.playbackRate);
+}
+
+// ---------- playback highlight ----------
+audio.addEventListener("timeupdate", () => {
+  const d = state.detail; if (!d || !d.utterances.length) return;
+  const t = audio.currentTime; let lo = 0, hi = d.utterances.length - 1, i = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (d.utterances[mid].start <= t) { i = mid; lo = mid + 1; } else hi = mid - 1; }
+  if (i === nowIdx) return;
+  document.querySelector(".u.now")?.classList.remove("now");
+  nowIdx = i; const row = document.querySelector(`.u[data-i="${i}"]`);
+  if (row) { row.classList.add("now"); if (state.follow && !audio.paused) row.scrollIntoView({ block: "center", behavior: "smooth" }); }
+});
+audio.addEventListener("pause", () => clearTimeout(sampleStop));
+
+// ---------- keyboard ----------
+document.addEventListener("keydown", (e) => {
+  const typing = ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName);
+  if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "/") { e.preventDefault(); $("#search").focus(); }
+  else if (!state.detail) return;
+  else if (e.key === " ") { e.preventDefault(); audio.paused ? audio.play() : audio.pause(); }
+  else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    e.preventDefault(); audio.currentTime += (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 30 : 5); }
+  else if (e.key === "t" || e.key === "T") { e.preventDefault(); $("#title").focus(); }
+  else if (e.key === "d" || e.key === "D") { e.preventDefault(); state.toggleDiscard?.(); }
+  else if (e.key === "n" || e.key === "N") {
+    const recs = state.recs, start = recs.findIndex((r) => r.id === state.sel);
+    const next = [...recs.slice(start + 1), ...recs.slice(0, start)].find((r) => !r.title && r.status !== "no audio" && r.folder !== "discard");
+    if (next) select(next.id);
+  }
+});
+
+loadList();
+setInterval(() => loadList().catch(() => {}), 15000);
+</script>
+</body>
+</html>
