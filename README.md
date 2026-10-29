@@ -71,7 +71,7 @@ title. It's plain CSV, so you can edit it by hand.
 - **Tools:** `ffmpeg`, `rsync`, and `unshare` / `flock` (util-linux)
 - **An NVIDIA GPU** with about 6 GB of free VRAM for transcription and speaker labelling
 - **A Plaud account** and Plaud's official CLI (`@plaud-ai/cli`)
-- **pyarize**, a companion repo that isn't published yet. earshot currently runs its download,
+- **[pyarize](https://github.com/michaelv2/pyarize):** earshot currently runs its download,
   transcription and speaker-labelling scripts, and uses its pyannote environment. Moving the
   download step into earshot is planned.
 - **A Python environment with `faster-whisper`**
@@ -206,3 +206,7 @@ Everything earshot writes is mode 600 in 700 directories.
 - **Linux or WSL with NVIDIA only.** Apple Silicon support would need a different speech stack.
 - **earshot depends on Plaud's developer API** and on the formats it serves today: MP3, Ogg Opus,
   and bare Opus packets.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
