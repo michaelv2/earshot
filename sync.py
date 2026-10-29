@@ -12,9 +12,14 @@ node on PATH for the Plaud CLI, and holds a lock so runs never overlap.
   and is flagged as a short cloud copy; more than 30 s is refused and alerted.
 - Slack messages carry local start times and durations only, never titles or transcript text
   (SPEC §5). Nothing is posted when there's nothing new and nothing wrong.
-- A recording that fails is alerted once, then remembered in the state file and retried quietly.
+- A preflight check runs first and reports setup problems in plain words: missing pyarize
+  scripts or environments, the pyannote model not downloaded, or faster-whisper not importable.
+  Download problems stop downloads; transcription problems only stop transcription.
+- Each run transcribes every archived recording that has no transcript yet (except discarded
+  ones), so a recording whose transcription failed is retried the next day.
+- A failure is alerted once, then remembered in the state file and retried quietly.
 
-usage: python3 -I sync.py [--dry-run]
+usage: python3 -I sync.py [--dry-run | --safe-to-delete]
 """
 
 import argparse
@@ -24,6 +29,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -156,6 +162,57 @@ def transcribe(audio: Path) -> str:
     return ""
 
 
+def has_module(python: str | Path, module: str) -> bool:
+    try:
+        r = run([str(python), "-I", "-c", f"import importlib.util, sys; sys.exit(importlib.util.find_spec({module!r}) is None)"], 60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
+
+
+def preflight() -> tuple[list[str], list[str]]:
+    """Check the setup before touching anything. Returns (download problems, transcription problems)."""
+    dl, tx = [], []
+    if not (HOME / ".local" / "bin" / "plaud").exists():
+        dl.append("the Plaud CLI wrapper ~/.local/bin/plaud is missing (README, Setup step 2)")
+    if not shutil.which("ffmpeg"):
+        dl.append("ffmpeg isn't on PATH")
+    if not (PYARIZE / "scripts" / "plaud_ingest.py").exists():
+        dl.append(f"pyarize isn't at {PYARIZE}; set EARSHOT_PYARIZE_DIR in ~/.config/earshot/env")
+        return dl, ["pyarize is missing"]
+    for script in ("plaud_transcribe.py", "plaud_diarize.py"):
+        if not (PYARIZE / "scripts" / script).exists():
+            tx.append(f"pyarize has no scripts/{script}; check the pyarize version in the README")
+    if not shutil.which("unshare"):
+        tx.append("unshare isn't on PATH (util-linux)")
+    diarize_py = PYARIZE / ".venv" / "bin" / "python"
+    if not diarize_py.exists():
+        tx.append(f"pyarize's diarization environment is missing ({diarize_py}); see pyarize's README")
+    elif not has_module(diarize_py, "pyannote.audio"):
+        tx.append("pyarize's environment has no pyannote.audio; run `uv pip sync --no-build requirements-diarize.txt` there")
+    if not (HOME / ".pyarize" / "community-1.manifest.json").exists():
+        tx.append("the pyannote model isn't downloaded; run pyarize's scripts/fetch_community1.py once")
+    if not has_module(WHISPER_PY, "faster_whisper"):
+        tx.append(f"{WHISPER_PY} can't import faster_whisper; set EARSHOT_WHISPER_PYTHON in ~/.config/earshot/env")
+    return dl, tx
+
+
+def pending_audio(folders: dict[str, str]) -> list[Path]:
+    """Archived recordings with no diarized transcript yet: new downloads and earlier failures."""
+    out = []
+    for p in sorted(AUDIO.iterdir()):
+        if p.suffix not in (".ogg", ".mp3") or p.name.startswith("_") or len(p.stem) <= 16:
+            continue
+        if folders.get(p.stem[16:]) != "discard" and not (TRANSCRIPTS / f"{p.stem}.diarized.json").exists():
+            out.append(p)
+    return out
+
+
+def describe_stem(stem: str, minutes: str | None) -> str:
+    start = datetime.strptime(stem[:15], "%Y-%m-%d_%H%M")
+    return f"{start:%a %d %b %H:%M}" + (f" ({float(minutes):.0f} min)" if minutes else "")
+
+
 def make_brief(audio: Path) -> str:
     """Triage brief on llm-server (brief.py). Returns an error, or "" on success; never fatal."""
     r = run(["python3", "-I", str(Path(__file__).with_name("brief.py")), audio.stem], 900)
@@ -196,43 +253,75 @@ def main() -> None:
     args = ap.parse_args()
     log(f"sync start{' (dry run)' if args.dry_run else ''}; Slack webhook "
         f"{'configured' if os.environ.get('SLACK_WEBHOOK_URL') else 'MISSING'}")
+    dl_problems, tx_problems = preflight()
+    for msg in dl_problems + tx_problems:
+        log(f"preflight: {msg}")
+    if not dl_problems and not tx_problems:
+        log("preflight ok")
 
     token = auth(args.dry_run)
     if not token:
         return
-    known = {r["id"] for r in csv.DictReader(open(CSV_PATH))}
+    rows = {r["id"]: r for r in csv.DictReader(open(CSV_PATH))}
     cloud = list_cloud(token)
-    new = sorted((i for i in cloud if i["id"] not in known), key=lambda i: i["start_at"])
+    new = sorted((i for i in cloud if i["id"] not in rows), key=lambda i: i["start_at"])
     log(f"{len(cloud)} recording(s) in the cloud, {len(new)} new")
     if args.dry_run or args.safe_to_delete:
         for item in new:
             log(f"  would ingest {item['id']}  {describe(item)}")
+        for audio in pending_audio({k: r["folder"] for k, r in rows.items()}):
+            log(f"  would transcribe {audio.name} (archived, no transcript yet)")
         for item in safe_to_delete(cloud):
             log(f"  safe to delete in the Plaud app: {item['id']}  {describe(item)}")
         return
 
     state = load_state()
-    done, problems = [], []
-    for item in new:
-        log(f"ingest {item['id']}  {describe(item)}")
-        audio, drift, err = ingest(item)
-        if not err:
-            err = transcribe(audio)
-        if err:
-            log(f"  FAILED: {err}")
-            if item["id"] not in state["failed"]:
-                problems.append(f"{describe(item)}: {err}")
-            state["failed"][item["id"]] = {"first": state["failed"].get(item["id"], {}).get("first", datetime.now().isoformat()),
-                                           "error": err}
-            continue
-        state["failed"].pop(item["id"], None)
-        note = f", Plaud's copy {abs(drift):.0f} s short" if drift is not None and abs(drift) > MAX_DRIFT_OK else ""
-        if berr := make_brief(audio):
-            log(f"  brief failed: {berr}")
-            note += ", no brief yet (llm-server?)"
-        done.append(describe(item) + note)
-        log(f"  done{note}")
-        time.sleep(2)
+    done, problems, failed = [], [], 0
+
+    def fail(rid: str, label: str, err: str) -> None:
+        nonlocal failed
+        failed += 1
+        log(f"  FAILED: {err}")
+        if rid not in state["failed"]:
+            problems.append(f"{label}: {err}")
+        state["failed"][rid] = {"first": state["failed"].get(rid, {}).get("first", datetime.now().isoformat()),
+                                "error": err}
+
+    # Setup problems are alerted once per distinct set, then quietly until they change or clear.
+    setup = dl_problems + tx_problems
+    if setup and state.get("preflight") != setup:
+        problems.append("setup: " + "; ".join(setup))
+    state["preflight"] = setup
+
+    drifts = {}
+    if not dl_problems:
+        for item in new:
+            log(f"ingest {item['id']}  {describe(item)}")
+            audio, drift, err = ingest(item)
+            if err:
+                fail(item["id"], describe(item), err)
+                continue
+            drifts[audio.stem] = drift
+            time.sleep(2)
+
+    if not tx_problems:
+        rows = {r["id"]: r for r in csv.DictReader(open(CSV_PATH))}  # now including today's downloads
+        for audio in pending_audio({k: r["folder"] for k, r in rows.items()}):
+            rid = audio.stem[16:]
+            label = describe_stem(audio.stem, rows.get(rid, {}).get("duration_min"))
+            log(f"transcribe {audio.name}")
+            if err := transcribe(audio):
+                fail(rid, label, err)
+                continue
+            state["failed"].pop(rid, None)
+            drift = drifts.get(audio.stem)
+            note = f", Plaud's copy {abs(drift):.0f} s short" if drift is not None and abs(drift) > MAX_DRIFT_OK else ""
+            if berr := make_brief(audio):
+                log(f"  brief failed: {berr}")
+                note += ", no brief yet (llm-server?)"
+            done.append(label + note)
+            log(f"  done{note}")
+
     # Weekly nudge to clear the Plaud cloud of recordings that are safely archived and backed up.
     deletable, remind = [], False
     last = state.get("last_delete_reminder")
@@ -246,7 +335,7 @@ def main() -> None:
 
     lines = []
     if done:
-        lines.append(f":inbox_tray: Plaud sync: {len(done)} new recording(s) transcribed, diarized and briefed, "
+        lines.append(f":inbox_tray: Plaud sync: {len(done)} recording(s) transcribed, diarized and briefed, "
                      f"each filed under its suggested category. Triage them at {REVIEW_URL}")
         lines += [f"• {d}" for d in done]
     if problems:
@@ -258,7 +347,7 @@ def main() -> None:
         lines += [f"• {describe(i)}" for i in deletable]
     if lines:
         slack("\n".join(lines), False)
-    log(f"sync end: {len(done)} done, {len(new) - len(done)} failed")
+    log(f"sync end: {len(done)} done, {failed} failed")
 
 
 if __name__ == "__main__":

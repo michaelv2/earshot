@@ -13,7 +13,7 @@ requirements. The design notes are in [SPEC.md](SPEC.md).
 
 - **Syncs** new recordings from your Plaud account once a day, using Plaud's official CLI login.
   Each download is checked: the byte count matches, it decodes cleanly, and its length agrees
-  with what Plaud reports.
+  with what Plaud reports. Any recording still without a transcript is retried on the next run.
 - **Transcribes and labels speakers offline.** It uses faster-whisper large-v3 and pyannote
   `speaker-diarization-community-1`. Both run inside a network namespace with no network access.
 - **Writes a triage brief with a local LLM** (Ollama, `gemma4:31b` by default):
@@ -74,6 +74,10 @@ title. It's plain CSV, so you can edit it by hand.
 - **[pyarize](https://github.com/michaelv2/pyarize):** earshot currently runs its download,
   transcription and speaker-labelling scripts, and uses its pyannote environment. Moving the
   download step into earshot is planned.
+  - **Tested with pyarize at
+    [`2a594ae`](https://github.com/michaelv2/pyarize/commit/2a594ae)** (2026-10-28).
+  - earshot calls the scripts by path, so later versions work as long as their command lines
+    and output files stay the same.
 - **A Python environment with `faster-whisper`**
 - **A Hugging Face token**, needed once to download the gated pyannote model
 - **Optional:**
@@ -117,7 +121,12 @@ title. It's plain CSV, so you can edit it by hand.
    systemctl --user daemon-reload && systemctl --user enable --now earshot-review
    ```
 8. **Check it all:** `~/projects/earshot/sync_cron.sh --dry-run`, then read
-   `~/.local/share/earshot/sync.log`.
+   `~/.local/share/earshot/sync.log`. The log starts with a preflight check. It either says
+   `preflight ok`, or names what's missing and which setting to change:
+   - the pyarize folder or its environment
+   - the pyannote model download
+   - a Python that can import faster-whisper
+   - the Plaud CLI wrapper
 
 ## Configuration
 
