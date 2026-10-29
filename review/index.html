@@ -42,7 +42,7 @@ main { flex: 1; display: grid; grid-template-columns: minmax(260px, 340px) 1fr; 
 #detail { overflow-y: auto; padding: 16px 22px 40px; }
 .empty { color: var(--muted); padding: 40px; text-align: center; }
 .titlerow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-#title { flex: 1; min-width: 240px; font: 600 20px/1.3 inherit; font-family: inherit; padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text); }
+#title { flex: 1; min-width: 240px; font-family: inherit; font-weight: 600; font-size: 20px; line-height: 1.3; padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text); }
 #title:hover { border-color: var(--line); } #title:focus { border-color: var(--accent); outline: none; background: var(--panel); }
 select, .btn { font: inherit; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; }
 .btn:hover { border-color: var(--accent); } .btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
@@ -55,6 +55,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: v
 .spk { display: grid; grid-template-columns: 14px 96px minmax(140px, 260px) 80px auto; gap: 10px; align-items: center; padding: 4px 0; }
 .dot { width: 12px; height: 12px; border-radius: 50%; }
 .spk input { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+.spk button { justify-self: start; }
 .spk .lbl, .spk .dur { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .note { color: var(--muted); font-size: 13px; }
 .notice { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 6px; padding: 8px 12px; margin: 10px 0; display: flex; gap: 10px; align-items: center; }
@@ -182,6 +183,7 @@ $("#search").addEventListener("input", (e) => { state.q = e.target.value; render
 async function select(id, keepTime = false) {
   const t = keepTime ? audio.currentTime : 0;
   state.sel = id; renderList();
+  history.replaceState(null, "", "#" + encodeURIComponent(id));  // shareable link to this recording
   const d = await api(`/api/recordings/${id}`);
   if (state.sel !== id) return;
   state.detail = d; nowIdx = -1;
@@ -381,7 +383,12 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-loadList();
+// Deep links: #<id> opens a recording, #<id>/summary also opens its Summary tab.
+loadList().then(() => {
+  const [id, tab] = decodeURIComponent(location.hash.slice(1)).split("/");
+  if (tab === "summary" || tab === "transcript") state.tab = tab;
+  if (id && state.recs.some((r) => r.id === id)) select(id);
+});
 setInterval(() => loadList().catch(() => {}), 15000);
 </script>
 </body>

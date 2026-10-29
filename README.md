@@ -7,6 +7,8 @@ offline, triages each with a local LLM, and gives you a page to listen, title an
 (Windows 11 + WSL2, an NVIDIA RTX 4080 and a Plaud Note), so expect rough edges and hard
 requirements. The design notes are in [SPEC.md](SPEC.md).
 
+![The review page: recordings filed by category, and one open recording with its triage brief, player, named speakers and transcript](docs/review-light.png)
+
 ## What it does
 
 - **Syncs** new recordings from your Plaud account once a day, using Plaud's official CLI login.
@@ -148,6 +150,8 @@ Open http://localhost:8790. On WSL2, the Windows browser reaches it at the same 
 - **Summaries.** A recording with `<stem>.summary.md` next to its transcript shows it on the
   Summary tab. Writing these is manual for now; a button with summary templates per category is
   planned.
+
+  ![The Summary tab in dark mode](docs/summary-dark.png)
 - **Keys:**
 
   | Key | Action |
@@ -158,6 +162,15 @@ Open http://localhost:8790. On WSL2, the Windows browser reaches it at the same 
   | `T` | Edit the title |
   | `D` | Discard / restore |
   | `/` | Search |
+
+**Try it without a Plaud.** `demo/make_demo.py` builds a fake library. Everything in it is invented:
+the people, the conversations, and the audio, which is silence. The screenshots above come from it.
+```bash
+python3 -I demo/make_demo.py /tmp/earshot-demo
+python3 -I review/server.py --root /tmp/earshot-demo/recordings --port 8791   # http://localhost:8791
+```
+Add `#<id>` to the page address to open a recording directly, and `#<id>/summary` to open it on
+the Summary tab.
 
 Command line:
 ```bash

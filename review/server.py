@@ -11,7 +11,7 @@ Serves on 127.0.0.1 only, from the files under ~/recordings. Standard library on
 Requests must carry a localhost Host header (blocks DNS rebinding), and writes need the X-Earshot
 header, which a cross-site form or fetch can't send without a CORS preflight this server never grants.
 
-usage: python3 -I review/server.py [--port 8790]
+usage: python3 -I review/server.py [--port 8790] [--root ~/recordings]
 """
 
 import argparse
@@ -30,9 +30,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-ROOT = Path.home() / "recordings"
-CSV_PATH = ROOT / "folders.csv"
-AUDIO, TRANSCRIPTS, CACHE = (ROOT / "plaud" / d for d in ("audio", "transcripts", "cache"))
+def set_root(root: Path) -> None:
+    global ROOT, CSV_PATH, AUDIO, TRANSCRIPTS, CACHE
+    ROOT = root
+    CSV_PATH = ROOT / "folders.csv"
+    AUDIO, TRANSCRIPTS, CACHE = (ROOT / "plaud" / d for d in ("audio", "transcripts", "cache"))
+
+
+set_root(Path.home() / "recordings")
 # Categories match brief.py's; "unfiled" means no brief yet, "discard" hides a recording.
 FOLDERS = ["interview", "1:1 meeting", "group meeting", "family", "unfiled", "discard"]
 PAGE = Path(__file__).with_name("index.html")
@@ -335,7 +340,10 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8790)
+    ap.add_argument("--root", type=Path, help="recordings folder (default ~/recordings); demo/make_demo.py builds a fake one")
     args = ap.parse_args()
+    if args.root:
+        set_root(args.root.expanduser().resolve())
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.allowed_hosts = {f"127.0.0.1:{args.port}", f"localhost:{args.port}"}
     print(f"Review page: http://localhost:{args.port}/  (Ctrl+C to stop)")
