@@ -9,7 +9,8 @@ node on PATH for the Plaud CLI, and holds a lock so runs never overlap.
   llm-server; skipped if it's unreachable, and `brief.py --missing` catches up later). Fix the
   category and add a title on the review page.
 - Drift policy (SPEC §3.1): up to 3 s is fine; 3-30 s is accepted if the file decodes cleanly
-  and is flagged as a short cloud copy; more than 30 s is refused and alerted.
+  and is flagged as a short cloud copy; more than 30 s, or any decode error, is refused before
+  the recording is filed, alerted, and downloaded again on the next run.
 - Slack messages carry local start times and durations only, never titles or transcript text
   (SPEC §5). Nothing is posted when there's nothing new and nothing wrong.
 - A preflight check runs first and reports setup problems in plain words: missing pyarize
@@ -132,17 +133,13 @@ def run(cmd: list[str], timeout: int, **kw) -> subprocess.CompletedProcess:
 
 
 def ingest(item: dict) -> tuple[Path | None, float | None, str]:
-    """Download and verify one recording. Returns (audio path, drift, error)."""
+    """Download one recording; plaud_ingest.py verifies it before filing it. Returns (audio path, drift, error)."""
     r = run(["python3", "-I", "scripts/plaud_ingest.py", item["id"], "unfiled", str(MAX_DRIFT)], 900, cwd=PYARIZE)
     out = (r.stdout + r.stderr).strip()
     m = re.search(r"^ok (\S+)\s.*?drift ([+-]?[\d.]+)s", out, re.M)
     if r.returncode or not m:
         return None, None, out.splitlines()[-1][:200] if out else f"exit {r.returncode}"
-    path, drift = AUDIO / m.group(1), float(m.group(2))
-    errors = run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "null", "-"], 600).stderr.strip()
-    if errors:
-        return path, drift, f"decode errors: {len(errors.splitlines())} lines"
-    return path, drift, ""
+    return AUDIO / m.group(1), float(m.group(2)), ""
 
 
 def transcribe(audio: Path) -> str:

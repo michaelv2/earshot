@@ -75,7 +75,8 @@ title. It's plain CSV, so you can edit it by hand.
   transcription and speaker-labelling scripts, and uses its pyannote environment. Moving the
   download step into earshot is planned.
   - **Tested with pyarize at
-    [`2a594ae`](https://github.com/michaelv2/pyarize/commit/2a594ae)** (2026-10-28).
+    [`b421e7f`](https://github.com/michaelv2/pyarize/commit/b421e7f)** (2026-10-30). Earlier
+    versions don't decode-check downloads.
   - earshot calls the scripts by path, so later versions work as long as their command lines
     and output files stay the same.
 - **A Python environment with `faster-whisper`**
