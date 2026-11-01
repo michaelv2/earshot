@@ -1,7 +1,8 @@
 """Local review page for Plaud recordings: listen, give them friendly titles, file them, name speakers.
 
 Serves on 127.0.0.1 only, from the files under ~/recordings. Standard library only (SPEC G5).
-  folders.csv          the filing source of truth; this page edits its `folder` and `title` columns
+  folders.csv          the filing source of truth; this page edits its `folder`, `title` and
+                       `archived` columns (`archived` is the local date it left the inbox, blank if not)
   plaud/audio/         originals, never modified. Ogg files are played through an audio-only stream
                        copy in plaud/cache/, because Plaud adds a metadata stream browsers may reject
   plaud/transcripts/   reads <stem>.diarized.json, or <stem>.json before diarization, plus
@@ -25,6 +26,7 @@ import subprocess
 import tempfile
 import threading
 from collections import defaultdict
+from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -150,6 +152,7 @@ def summary(row: dict, index: dict) -> dict:
         "id": row["id"], "stem": stem, "start": row.get("start_local", ""),
         "duration_min": float(row.get("duration_min") or 0), "folder": row.get("folder", ""),
         "title": row.get("title") or "", "plaud_name": row.get("name") or "", "status": status,
+        "archived": row.get("archived") or "",
         "speakers": len(labels), "speakers_named": sum(1 for s in labels if names.get(s)),
         "has_summary": bool(stem) and (TRANSCRIPTS / f"{stem}.summary.md").exists(),
         "brief": {k: b.get(k) for k in ("category", "topic", "title")} if stem and (b := load_brief(stem)) else None,
@@ -319,6 +322,11 @@ class Handler(BaseHTTPRequestHandler):
             if body["folder"] not in FOLDERS:
                 return self.send_error(400, "folder")
             changes["folder"] = body["folder"]
+        if "archived" in body:
+            if not isinstance(body["archived"], bool):
+                return self.send_error(400, "archived")
+            # Archiving again keeps the original date.
+            changes["archived"] = (row.get("archived") or date.today().isoformat()) if body["archived"] else ""
         if changes:
             update_csv_row(row["id"], changes)
         if "speakers" in body:
@@ -334,7 +342,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     names.pop(label, None)
             write_private_atomic(TRANSCRIPTS / f"{stem}.speakers.json", json.dumps(names, indent=1))
-        self._json({"ok": True})
+        self._json({"ok": True, **changes})
 
 
 def main():

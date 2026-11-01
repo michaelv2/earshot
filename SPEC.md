@@ -168,7 +168,7 @@ discovered → downloaded → verified → archived → backed_up → submitted 
 
 ```
 ~/recordings/
-├── folders.csv                          # id, start_local, duration_min, folder, plaud_transcribed, name, title
+├── folders.csv                          # id, start_local, duration_min, folder, plaud_transcribed, name, title, archived
 └── plaud/
     ├── cache/<stem>.ogg                # audio-only copies for the review page
     ├── audio/<YYYY-MM-DD_HHMM>_<id>.{mp3,ogg}
@@ -191,6 +191,13 @@ It's standard library only, and listens on 127.0.0.1 only.
   roles in `<stem>.speakers.json`. Giving two labels the same name merges them in the display.
   Files keep their `<date>_<id>` names, because those names link the audio, raw and transcript
   files.
+- **Inbox (2026-11-01).** The page opens on an Inbox tab listing every recording that is
+  neither archived nor discarded. Archive means "dealt with", for example after its details
+  were copied into memoize by hand. It's separate from the category, so filing is never lost.
+  `folders.csv` gains an `archived` column holding the local date (blank means in the inbox).
+  The review page is its only writer, and the other writers carry it through because they're
+  header-aware. Archiving can be done from the recording (`A`) or from its row in the list, with
+  an undo toast.
 - **Download.** A transcript with speaker names is available for summaries.
 - **Tabs.** Each recording has Transcript and Summary tabs. The Summary tab shows
   `<stem>.summary.md` through a small Markdown renderer that builds text nodes only, so a

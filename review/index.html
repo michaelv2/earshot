@@ -28,7 +28,18 @@ header h1 { font-size: 16px; margin: 0 8px 0 0; }
 #search { margin-left: auto; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; width: 220px; }
 main { flex: 1; display: grid; grid-template-columns: minmax(260px, 340px) 1fr; min-height: 0; }
 #list { overflow-y: auto; border-right: 1px solid var(--line); background: var(--panel); }
-.item { padding: 9px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.item { padding: 9px 14px; border-bottom: 1px solid var(--line); cursor: pointer; position: relative; }
+/* Quick archive in the inbox list: revealed on hover, drawn over the end of the title. */
+.item .arch { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; padding: 3px 8px; opacity: 0; }
+.item:hover .arch, .item:focus-within .arch { opacity: 1; background: var(--bg); }
+.item.sel .arch { background: var(--accent-soft); }
+@media (hover: none) { .item .arch { opacity: 1; } .item.inbox { padding-right: 88px; } }
+.arc { color: var(--muted); }
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 10; display: flex; gap: 14px; align-items: center;
+  max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: 8px; background: var(--text); color: var(--bg); box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+#toast[hidden] { display: none; }
+#toast span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toast button { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .item:hover { background: var(--bg); }
 .item.sel { background: var(--accent-soft); }
 .item .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -111,6 +122,7 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4p
   <nav id="list"></nav>
   <section id="detail"><div class="empty">Pick a recording on the left.</div></section>
 </main>
+<div id="toast" role="status" hidden></div>
 <script>
 "use strict";
 const $ = (s) => document.querySelector(s);
@@ -135,12 +147,16 @@ const hms = (t) => { t = Math.max(0, Math.floor(t)); const h = Math.floor(t / 36
 const mins = (m) => m >= 60 ? `${Math.floor(m / 60)} h ${Math.round(m % 60)} min` : `${Math.round(m)} min`;
 const fmtDate = (s) => { const d = new Date(s.replace(" ", "T"));
   return isNaN(d) ? s : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) + " · " + s.slice(11, 16); };
-// The "All" tab hides discarded recordings; they're only listed under Discard.
-const visible = (r, f) => f === "all" ? r.folder !== "discard" : r.folder === f;
+const fmtDay = (s) => { const d = new Date(s + "T00:00");  // a local date, not UTC midnight
+  return isNaN(d) ? s : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
+// The Inbox holds what you haven't dealt with yet: not archived and not discarded. The "All" tab
+// hides discarded recordings too; they're only listed under Discard.
+const visible = (r, f) => f === "inbox" ? !r.archived && r.folder !== "discard"
+  : f === "all" ? r.folder !== "discard" : r.folder === f;
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
 const STATUS = { diarized: "Diarized", transcribed: "Transcribed, no speakers yet", none: "Not transcribed", "no audio": "No audio" };
 
-let state = { folders: [], recs: [], filter: "all", q: "", sel: null, detail: null, follow: true, tab: "transcript" };
+let state = { folders: [], recs: [], filter: "inbox", q: "", sel: null, detail: null, follow: true, tab: "transcript" };
 try { state.tab = localStorage.getItem("review.tab") || state.tab; } catch {}
 const audio = new Audio(); audio.preload = "metadata";
 let sampleStop = null, nowIdx = -1;
@@ -157,7 +173,7 @@ async function loadList() {
 }
 function renderTabs() {
   const count = (f) => state.recs.filter((r) => visible(r, f)).length;
-  $("#tabs").replaceChildren(...["all", ...state.folders].map((f) =>
+  $("#tabs").replaceChildren(...["inbox", "all", ...state.folders].map((f) =>
     el("button", { class: state.filter === f ? "on" : "", onclick: () => { state.filter = f; renderTabs(); renderList(); } },
       cap(f), el("span", { class: "n", text: String(count(f)) }))));
 }
@@ -165,7 +181,10 @@ function renderList() {
   const q = state.q.toLowerCase();
   const recs = state.recs.filter((r) => visible(r, state.filter) &&
     (!q || [r.title, r.plaud_name, r.start, r.brief?.title, r.brief?.topic].join(" ").toLowerCase().includes(q)));
-  $("#list").replaceChildren(...recs.map((r) => el("div", { class: "item" + (r.id === state.sel ? " sel" : ""), onclick: () => select(r.id) },
+  const inbox = state.filter === "inbox";
+  $("#list").replaceChildren(...recs.map((r) => el("div", { class: "item" + (r.id === state.sel ? " sel" : "") + (inbox ? " inbox" : ""), onclick: () => select(r.id) },
+    inbox ? el("button", { class: "btn arch", text: "Archive", title: "Done with it: take it out of the inbox",
+      onclick: (e) => { e.stopPropagation(); setArchived(r.id, true); } }) : null,
     r.title ? el("div", { class: "t", text: r.title })
       : r.brief?.title ? el("div", { class: "t sug", text: r.brief.title, title: "Suggested title" })
       : el("div", { class: "t none", text: "Untitled" }),
@@ -174,8 +193,27 @@ function renderList() {
       el("span", { text: fmtDate(r.start) }), el("span", { text: mins(r.duration_min) }),
       el("span", { class: "st-" + r.status.replace(" ", "-"), text: r.status === "diarized"
         ? `${r.speakers_named}/${r.speakers} speakers named` : STATUS[r.status] }),
-      r.has_summary ? el("span", { class: "has-sum", text: "Summary" }) : null))));
-  if (!recs.length) $("#list").append(el("div", { class: "empty", text: "Nothing here." }));
+      r.has_summary ? el("span", { class: "has-sum", text: "Summary" }) : null,
+      r.archived && !inbox ? el("span", { class: "arc", text: "Archived" }) : null))));
+  if (!recs.length) $("#list").append(el("div", { class: "empty", text: inbox && !q ? "All caught up." : "Nothing here." }));
+}
+async function setArchived(id, on, offerUndo = true) {
+  const r = state.recs.find((x) => x.id === id);
+  try {
+    const res = await api(`/api/recordings/${id}`, { method: "PATCH", body: JSON.stringify({ archived: on }) });
+    if (!("archived" in res)) throw new Error("the server didn't save it; restart earshot-review");
+    if (r) r.archived = res.archived;
+    if (state.detail?.id === id) { state.detail.archived = res.archived; state.showArchived?.(); }
+    renderTabs(); renderList();
+    const name = r ? r.title || r.brief?.title || fmtDate(r.start) : id;
+    if (on && offerUndo) toast(`Archived “${name}”`, () => setArchived(id, false, false));
+  } catch (e) { toast(`Couldn't ${on ? "archive" : "unarchive"}: ${e.message}`); }
+}
+let toastTimer = null;
+function toast(msg, undo) {
+  const t = $("#toast");
+  t.replaceChildren(el("span", { text: msg }), undo ? el("button", { text: "Undo", onclick: () => { t.hidden = true; undo(); } }) : null);
+  t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 6000);
 }
 $("#search").addEventListener("input", (e) => { state.q = e.target.value; renderList(); });
 
@@ -223,6 +261,17 @@ function renderDetail() {
   const discard = el("button", { class: "btn", onclick: () => state.toggleDiscard(),
     text: d.folder === "discard" ? "Restore" : "Discard",
     title: d.folder === "discard" ? "Move back to unfiled (D)" : "Hide it and skip summaries; the audio is kept (D)" });
+  // Archive takes a recording out of the inbox once you're done with it, e.g. its details are in memoize.
+  // Updated in place, so archiving mid-playback doesn't re-render the transcript.
+  const archive = el("button", { class: "btn", onclick: () => setArchived(d.id, !d.archived) });
+  const archivedNote = el("span");
+  state.showArchived = () => {
+    archive.textContent = d.archived ? "Unarchive" : "Archive";
+    archive.title = d.archived ? "Move back to the inbox (A)" : "Done with it: take it out of the inbox (A)";
+    archivedNote.textContent = d.archived ? `Archived ${fmtDay(d.archived)}` : "";
+    archivedNote.hidden = !d.archived;
+  };
+  state.showArchived();
 
   // Triage brief from brief.py: suggested title and topic, plus a very short summary. Its category
   // is applied automatically at ingest, so it's only shown here if it differs from the current one.
@@ -283,9 +332,9 @@ function renderDetail() {
   };
 
   $("#detail").replaceChildren(
-    el("div", { class: "titlerow" }, title, folder, discard, saved),
+    el("div", { class: "titlerow" }, title, folder, archive, discard, saved),
     el("div", { class: "meta" },
-      el("span", { text: fmtDate(d.start) }), el("span", { text: mins(d.duration_min) }),
+      el("span", { text: fmtDate(d.start) }), el("span", { text: mins(d.duration_min) }), archivedNote,
       d.plaud_name ? el("span", { text: "Plaud: " + d.plaud_name }) : null,
       el("span", { text: d.id }),
       d.utterances.length ? el("a", { href: `/api/recordings/${d.id}/transcript.txt`, text: "Download transcript" }) : null),
@@ -294,7 +343,7 @@ function renderDetail() {
     el("div", { id: "notice" }),
     tabBar, panels.transcript, panels.summary,
     el("div", { class: "keys" }, "Keys: ", el("kbd", { text: "Space" }), " play/pause · ", el("kbd", { text: "←" }), " ", el("kbd", { text: "→" }),
-      " 5 s (", el("kbd", { text: "Shift" }), " 30 s) · ", el("kbd", { text: "N" }), " next untitled · ", el("kbd", { text: "T" }), " title · ", el("kbd", { text: "D" }), " discard · ", el("kbd", { text: "/" }), " search"));
+      " 5 s (", el("kbd", { text: "Shift" }), " 30 s) · ", el("kbd", { text: "N" }), " next untitled · ", el("kbd", { text: "T" }), " title · ", el("kbd", { text: "A" }), " archive · ", el("kbd", { text: "D" }), " discard · ", el("kbd", { text: "/" }), " search"));
   audio.controls = true;
   showTab(panels[state.tab] ? state.tab : "transcript");
 }
@@ -376,6 +425,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault(); audio.currentTime += (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 30 : 5); }
   else if (e.key === "t" || e.key === "T") { e.preventDefault(); $("#title").focus(); }
   else if (e.key === "d" || e.key === "D") { e.preventDefault(); state.toggleDiscard?.(); }
+  else if (e.key === "a" || e.key === "A") { e.preventDefault(); setArchived(state.detail.id, !state.detail.archived); }
   else if (e.key === "n" || e.key === "N") {
     const recs = state.recs, start = recs.findIndex((r) => r.id === state.sel);
     const next = [...recs.slice(start + 1), ...recs.slice(0, start)].find((r) => !r.title && r.status !== "no audio" && r.folder !== "discard");

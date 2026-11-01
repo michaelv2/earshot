@@ -24,6 +24,7 @@ requirements. The design notes are in [SPEC.md](SPEC.md).
   The brief tells you whether a recording deserves a full summary at all.
 - **Review page** at http://localhost:8790:
   - listen with the transcript beside the player, and click a line to jump there
+  - an inbox of the recordings you haven't dealt with yet; archive each one when you're done
   - rename and recategorize recordings
   - name speakers; giving two labels the same name merges them
   - discard recordings
@@ -57,7 +58,7 @@ Plaud cloud ──> sync.py ──> ~/recordings/plaud/audio/        (originals,
                   ├─> brief.py   (local Ollama)          ──> <stem>.brief.json + category
                   └─> Slack: "N new recordings, triage them at localhost:8790"
 
-review/server.py (systemd, :8790) ── listen, title, recategorize, name speakers, discard
+review/server.py (systemd, :8790) ── inbox, listen, title, recategorize, name speakers, archive, discard
 backup.sh (hourly) ──> NAS: originals append-only + verified; metadata mirrored, never deleted
 ```
 
@@ -155,6 +156,12 @@ Open http://localhost:8790. On WSL2, the Windows browser reaches it at the same 
 - **Triage.** Each new recording shows its brief above the player. Fix the category if it's
   wrong, press **Use title** or type your own title and press Enter, and name the speakers.
   `▶ Sample` plays a speaker's longest stretch, to tell who's who.
+- **Inbox.** The page opens on the Inbox: every recording you haven't archived or discarded,
+  newest first. Once you've dealt with one, for example by copying what matters into memoize,
+  press **Archive** (`A`), or hover over its row in the list and press the row's **Archive**
+  button. Archived recordings stay under All and their category, marked "Archived". **Unarchive**
+  (`A` again) puts one back. The date you archived it is stored in the `archived` column of
+  `folders.csv`, and blank means it's still in the inbox.
 - **Discard** (`D`) hides a recording and marks it as not worth a summary. The audio is kept,
   and **Restore** brings it back.
 - **Summaries.** A recording with `<stem>.summary.md` next to its transcript shows it on the
@@ -170,6 +177,7 @@ Open http://localhost:8790. On WSL2, the Windows browser reaches it at the same 
   | `←` `→` | Back / forward 5 s (`Shift` for 30 s) |
   | `N` | Next untitled recording |
   | `T` | Edit the title |
+  | `A` | Archive / unarchive |
   | `D` | Discard / restore |
   | `/` | Search |
 
