@@ -69,14 +69,15 @@ def log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def check_model() -> None:
-    """Refuse anything that isn't a local model: '-cloud' tags have no local weights and send data off-site."""
+def check_model(model: str = MODEL) -> None:
+    """Refuse anything that isn't a local model: '-cloud' tags have no local weights and send data off-site.
+    summarize.py uses this too."""
     tags = json.load(urllib.request.urlopen(f"{OLLAMA}/api/tags", timeout=10))["models"]
-    m = next((t for t in tags if t["name"] == MODEL), None)
+    m = next((t for t in tags if t["name"] == model), None)
     if m is None:
-        sys.exit(f"{MODEL} is not installed on {OLLAMA}")
-    if "cloud" in MODEL or not m.get("size"):
-        sys.exit(f"{MODEL} looks like a cloud model (no local weights); refusing to send transcripts to it")
+        sys.exit(f"{model} is not installed on {OLLAMA}")
+    if "cloud" in model or not m.get("size"):
+        sys.exit(f"{model} looks like a cloud model (no local weights); refusing to send transcripts to it")
 
 
 def find_stems(keys: list[str]) -> list[str]:

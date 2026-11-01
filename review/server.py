@@ -1,6 +1,6 @@
 """Local review page for Plaud recordings: listen, give them friendly titles, file them, name speakers.
 
-Serves on 127.0.0.1 only, from the files under ~/recordings. Standard library only (SPEC G5).
+Serves on 127.0.0.1 by default, from the files under ~/recordings. Standard library only (SPEC G5).
   folders.csv          the filing source of truth; this page edits its `folder`, `title` and
                        `archived` columns (`archived` is the local date it left the inbox, blank if not)
   plaud/audio/         originals, never modified. Ogg files are played through an audio-only stream
@@ -9,28 +9,43 @@ Serves on 127.0.0.1 only, from the files under ~/recordings. Standard library on
                        <stem>.brief.json (brief.py) and <stem>.summary.md; speaker names are saved
                        to <stem>.speakers.json
 
-Requests must carry a localhost Host header (blocks DNS rebinding), and writes need the X-Earshot
-header, which a cross-site form or fetch can't send without a CORS preflight this server never grants.
+Requests must carry an expected Host header (localhost, or an --allow-host name; blocks DNS
+rebinding), and writes need the X-Earshot header, which a cross-site form or fetch can't send
+without a CORS preflight this server never grants.
 
-usage: python3 -I review/server.py [--port 8790] [--root ~/recordings]
+Remote access (e.g. over WireGuard) is off unless configured. Clients other than loopback must come
+from an --allow-from network and hold a session cookie, which opening the page once with
+?token=<EARSHOT_REVIEW_TOKEN> sets. Under WSL2, Windows forwards connections in (netsh portproxy)
+from the default gateway, so "--allow-from gateway" admits exactly those, and the Windows firewall
+decides who may reach the port.
+
+usage: python3 -I review/server.py [--port 8790] [--root ~/recordings] [--bind ADDR]
+           [--allow-host HOST[:PORT]]... [--allow-from CIDR|gateway]... [--link]
+Options also come from EARSHOT_REVIEW_BIND, EARSHOT_REVIEW_HOSTS and EARSHOT_REVIEW_ALLOW_FROM
+(comma-separated); the token only from EARSHOT_REVIEW_TOKEN, so it never shows in ps.
 """
 
 import argparse
 import csv
 import fcntl
+import hashlib
+import hmac
 import io
+import ipaddress
 import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 from collections import defaultdict
 from datetime import date
 from http import HTTPStatus
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 def set_root(root: Path) -> None:
     global ROOT, CSV_PATH, AUDIO, TRANSCRIPTS, CACHE
@@ -46,6 +61,7 @@ PAGE = Path(__file__).with_name("index.html")
 ID_RE = re.compile(r"[A-Za-z0-9_]{1,64}")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 csv_lock, cache_lock = threading.Lock(), threading.Lock()
+COOKIE = "earshot_session"
 
 
 # --- Storage ---------------------------------------------------------------------------------------
@@ -186,11 +202,44 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # paths only, never bodies
         pass
 
+    def _deny(self, status: HTTPStatus, reason: str) -> bool:
+        print(f"refused {self.client_address[0]}: {reason}", flush=True)  # never paths, bodies or tokens
+        self.send_error(status, reason)
+        return False
+
     def _allowed(self) -> bool:
+        """Loopback clients pass; others need an allowed address, then a session cookie (or ?token= to get one)."""
+        peer = ipaddress.ip_address(self.client_address[0])
+        if not peer.is_loopback and not any(peer in net for net in self.server.allow_from):
+            return self._deny(HTTPStatus.FORBIDDEN, "address not allowed")
         if self.headers.get("Host", "") not in self.server.allowed_hosts:
-            self.send_error(HTTPStatus.FORBIDDEN, "bad Host")
+            return self._deny(HTTPStatus.FORBIDDEN, "bad Host")
+        given = parse_qs(urlsplit(self.path).query).get("token")
+        if given and self.server.token and self.command == "GET":
+            if not hmac.compare_digest(given[0].encode(), self.server.token.encode()):
+                return self._deny(HTTPStatus.UNAUTHORIZED, "wrong token")
+            self.send_response(HTTPStatus.SEE_OTHER)  # to "/" so the token leaves the address bar and history
+            self.send_header("Location", "/")
+            self.send_header("Set-Cookie", f"{COOKIE}={self.server.session}; Path=/; Max-Age=31536000; "
+                                           "HttpOnly; SameSite=Strict")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return False
-        return True
+        if peer.is_loopback or self._session_ok():
+            return True
+        return self._deny(HTTPStatus.UNAUTHORIZED, "no session: open the page once with ?token=")
+
+    def _session_ok(self) -> bool:
+        jar = SimpleCookie()
+        try:
+            jar.load(self.headers.get("Cookie", ""))
+        except CookieError:
+            return False
+        morsel = jar.get(COOKIE)
+        return bool(self.server.session and morsel) and hmac.compare_digest(
+            morsel.value.encode(), self.server.session.encode())
 
     def _send(self, status: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
         self.send_response(status)
@@ -345,16 +394,70 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": True, **changes})
 
 
+def default_gateway() -> str | None:
+    """The IPv4 default gateway, from /proc/net/route. Under WSL2's NAT it's the Windows host."""
+    try:
+        for line in Path("/proc/net/route").read_text().splitlines()[1:]:
+            f = line.split()
+            if f[1] == "00000000" and int(f[3], 16) & 2:  # default route, RTF_GATEWAY
+                return str(ipaddress.IPv4Address(int(f[2], 16).to_bytes(4, "little")))
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def env_list(name: str) -> list[str]:
+    return [v.strip() for v in os.environ.get(name, "").split(",") if v.strip()]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8790)
     ap.add_argument("--root", type=Path, help="recordings folder (default ~/recordings); demo/make_demo.py builds a fake one")
+    ap.add_argument("--bind", default=os.environ.get("EARSHOT_REVIEW_BIND", "127.0.0.1"),
+                    help="IP address to listen on (default 127.0.0.1)")
+    ap.add_argument("--allow-host", action="append", metavar="HOST[:PORT]",
+                    help="also accept this Host header: the address you browse to from elsewhere")
+    ap.add_argument("--allow-from", action="append", metavar="CIDR|gateway",
+                    help="accept clients from this network besides loopback; 'gateway' is the default gateway")
+    ap.add_argument("--link", action="store_true", help="print the sign-in link for each --allow-host, then exit")
     args = ap.parse_args()
     if args.root:
         set_root(args.root.expanduser().resolve())
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    server.allowed_hosts = {f"127.0.0.1:{args.port}", f"localhost:{args.port}"}
-    print(f"Review page: http://localhost:{args.port}/  (Ctrl+C to stop)")
+    hosts = args.allow_host if args.allow_host is not None else env_list("EARSHOT_REVIEW_HOSTS")
+    hosts = sorted({h if ":" in h else f"{h}:{args.port}" for h in hosts})
+    token = os.environ.get("EARSHOT_REVIEW_TOKEN", "")
+    if args.link:
+        if not token or not hosts:
+            sys.exit("set EARSHOT_REVIEW_TOKEN and EARSHOT_REVIEW_HOSTS first")
+        for h in hosts:
+            print(f"http://{h}/?token={token}")
+        return
+    nets = []
+    for src in args.allow_from if args.allow_from is not None else env_list("EARSHOT_REVIEW_ALLOW_FROM"):
+        if src == "gateway" and not (src := default_gateway()):
+            sys.exit("--allow-from gateway: no default gateway found")
+        try:
+            nets.append(ipaddress.ip_network(src, strict=False))
+        except ValueError:
+            sys.exit(f"bad --allow-from {src!r}")
+    try:
+        loopback = ipaddress.ip_address(args.bind).is_loopback
+    except ValueError:
+        sys.exit(f"--bind needs an IP address, not {args.bind!r}")
+    if not loopback and not (nets and hosts):
+        sys.exit("listening beyond loopback needs --allow-from and --allow-host (or their EARSHOT_REVIEW_* variables)")
+    if nets and len(token) < 20:
+        sys.exit("remote clients need EARSHOT_REVIEW_TOKEN set, 20 characters or more")
+
+    server = ThreadingHTTPServer((args.bind, args.port), Handler)
+    server.allowed_hosts = {f"127.0.0.1:{args.port}", f"localhost:{args.port}", *hosts}
+    server.allow_from, server.token = nets, token
+    server.session = hmac.new(token.encode(), b"earshot-review session", hashlib.sha256).hexdigest() if token else ""
+    print(f"Review page: http://localhost:{args.port}/  (Ctrl+C to stop)", flush=True)
+    if nets:
+        print(f"Also {', '.join(f'http://{h}/' for h in hosts)} for clients from "
+              f"{', '.join(map(str, nets))}, with the token once (--link prints it)", flush=True)
     server.serve_forever()
 
 

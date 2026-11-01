@@ -22,6 +22,10 @@ requirements. The design notes are in [SPEC.md](SPEC.md).
   - a summary of up to 60 words and a few takeaways
 
   The brief tells you whether a recording deserves a full summary at all.
+- **Drafts full summaries on request** with a local LLM (`qwen3.8:27b-128k`, reasoning on, by
+  default). There's a template per category: interview, 1:1 and group meeting. Every point
+  cites the time in the transcript it came from. Interview notes record evidence, never a
+  verdict.
 - **Review page** at http://localhost:8790:
   - listen with the transcript beside the player, and click a line to jump there
   - an inbox of the recordings you haven't dealt with yet; archive each one when you're done
@@ -43,8 +47,9 @@ requirements. The design notes are in [SPEC.md](SPEC.md).
   network access, and briefs go only to an Ollama server you run. Ollama's `-cloud` models are
   refused.
 - **Slack messages carry dates and durations only**, never titles or transcript text.
-- **The review page listens on 127.0.0.1 only.** It rejects non-localhost `Host` headers (which
-  blocks DNS rebinding) and cross-site writes.
+- **The review page listens on 127.0.0.1 by default.** It rejects unexpected `Host` headers
+  (which blocks DNS rebinding) and cross-site writes. Remote access is opt-in: it's limited to
+  networks you name and needs a token ([Remote access](#remote-access-eg-wireguard)).
 - **Plaud's cloud keeps its own copy** until you delete it in the Plaud app. earshot tells you
   when that's safe.
 
@@ -132,7 +137,8 @@ title. It's plain CSV, so you can edit it by hand.
 
 ## Configuration
 
-`~/.config/earshot/env` holds plain `KEY=value` lines, loaded by `sync_cron.sh` and `backup.sh`:
+`~/.config/earshot/env` holds plain `KEY=value` lines, loaded by `sync_cron.sh`, `backup.sh` and the
+review page's systemd unit:
 
 | Variable | Default | What it's for |
 |---|---|---|
@@ -140,8 +146,14 @@ title. It's plain CSV, so you can edit it by hand.
 | `EARSHOT_WHISPER_PYTHON` | `python3` | A Python with `faster-whisper` installed |
 | `EARSHOT_OLLAMA_URL` | `$OLLAMA_HOST`, then `localhost:11434` | Ollama server for briefs |
 | `EARSHOT_BRIEF_MODEL` | `gemma4:31b` | Brief model; must be a local model |
+| `EARSHOT_SUMMARY_MODEL` | `qwen3.8:27b-128k` | Full-summary model; must be a local model |
+| `EARSHOT_OWNER` | `Michael` | Your name, as the summary templates refer to you |
 | `EARSHOT_BACKUP_MOUNT` | `/mnt/s` | Backups are skipped, with an alert, if this isn't mounted |
 | `EARSHOT_BACKUP_DIR` | `$EARSHOT_BACKUP_MOUNT/backup/recordings` | Backup destination |
+| `EARSHOT_REVIEW_BIND` | `127.0.0.1` | Review page listen address; see [Remote access](#remote-access-eg-wireguard) |
+| `EARSHOT_REVIEW_HOSTS` | none | Comma-separated `host:port` names you browse to from other devices |
+| `EARSHOT_REVIEW_ALLOW_FROM` | none | Comma-separated networks allowed besides loopback; `gateway` means the default gateway |
+| `EARSHOT_REVIEW_TOKEN` | none | Sign-in token for remote devices, 20+ characters; required with `ALLOW_FROM` |
 
 For example:
 ```
@@ -152,6 +164,36 @@ EARSHOT_WHISPER_PYTHON=/home/you/venvs/whisper/bin/python
 ## Using it
 
 Open http://localhost:8790. On WSL2, the Windows browser reaches it at the same address.
+
+### Remote access (e.g. WireGuard)
+
+Off by default. To reach the page from a phone over a VPN that ends on your router:
+
+1. Add to `~/.config/earshot/env`, then `systemctl --user restart earshot-review`:
+   ```
+   EARSHOT_REVIEW_BIND=0.0.0.0
+   EARSHOT_REVIEW_HOSTS=192.168.1.20:8790   # this machine's LAN address, as you'll type it
+   EARSHOT_REVIEW_ALLOW_FROM=gateway        # WSL2; on plain Linux, your VPN subnet instead
+   EARSHOT_REVIEW_TOKEN=...                 # python3 -c "import secrets; print(secrets.token_urlsafe(16))"
+   ```
+2. On WSL2, Windows has to forward the port, and every forwarded connection reaches WSL from the
+   default gateway (hence `gateway`). So the Windows firewall decides who gets in: allow the
+   port from your VPN subnet only. In an admin PowerShell:
+   ```powershell
+   $ip = (wsl hostname -I).Trim().Split(" ")[0]
+   netsh interface portproxy add v4tov4 listenport=8790 listenaddress=0.0.0.0 connectport=8790 connectaddress=$ip
+   New-NetFirewallRule -DisplayName "earshot review (VPN)" -Direction Inbound -Protocol TCP -LocalPort 8790 -RemoteAddress <vpn-subnet> -Action Allow
+   ```
+   WSL's address changes on reboot, so refresh the portproxy at logon (Task Scheduler).
+3. On the router, allow VPN clients to reach this machine on port 8790, and include its address
+   in the client's `AllowedIPs`.
+4. Print the sign-in link in your own terminal, and open it once on each device:
+   `(set -a; . ~/.config/earshot/env; python3 -I review/server.py --link)`. It sets a year-long
+   cookie (HttpOnly, SameSite=Strict) and drops the token from the address bar. Changing the token
+   signs every device out. Refused requests are logged, without paths or tokens:
+   `journalctl --user -u earshot-review`.
+
+Traffic is plain HTTP between the router and this machine; the VPN encrypts the rest.
 
 - **Triage.** Each new recording shows its brief above the player. Fix the category if it's
   wrong, press **Use title** or type your own title and press Enter, and name the speakers.
@@ -164,9 +206,13 @@ Open http://localhost:8790. On WSL2, the Windows browser reaches it at the same 
   `folders.csv`, and blank means it's still in the inbox.
 - **Discard** (`D`) hides a recording and marks it as not worth a summary. The audio is kept,
   and **Restore** brings it back.
-- **Summaries.** A recording with `<stem>.summary.md` next to its transcript shows it on the
-  Summary tab. Writing these is manual for now; a button with summary templates per category is
-  planned.
+- **Summaries.** Run `python3 -I summarize.py <id>` to draft one; it appears on the Summary tab.
+  - **Name the speakers first,** including yourself, or action items can't have owners.
+  - **It takes 3–6 minutes** for an hour-long recording.
+  - **Check before you keep anything.** Every bullet ends with the `[mm:ss]` it came from.
+  - **Regenerating** keeps the previous draft as `<stem>.summary.prev.md`.
+  - **Templates** are in `templates/`. To change one privately, copy it to
+    `~/.config/earshot/templates/` and edit the copy.
 
   ![The Summary tab in dark mode](docs/summary-dark.png)
 - **Keys:**
@@ -196,6 +242,9 @@ Command line:
 ./sync_cron.sh --safe-to-delete          # list Plaud cloud recordings with a verified NAS copy
 python3 -I brief.py --missing            # brief everything transcribed that has no brief yet
 python3 -I brief.py <id> --force         # redo one brief, e.g. after naming its speakers
+python3 -I summarize.py <id>             # full summary, template picked from the category
+python3 -I summarize.py <id> --template interview --model gemma4:31b --no-think --out /tmp/try
+python3 -I summarize.py --templates      # list templates and where each one comes from
 systemctl --user restart earshot-review  # after editing review/
 ```
 
@@ -203,12 +252,12 @@ systemctl --user restart earshot-review  # after editing review/
 
 ```
 ~/recordings/
-├── folders.csv                  # id, start_local, duration_min, folder (category), plaud_transcribed, name, title
+├── folders.csv                  # id, start_local, duration_min, folder (category), plaud_transcribed, name, title, archived
 └── plaud/
     ├── audio/<YYYY-MM-DD_HHMM>_<id>.{mp3,ogg}   # originals
     ├── raw/                     # Plaud's bare-Opus originals (the .ogg is a lossless rewrap)
     ├── cache/                   # audio-only copies for the browser (rebuildable)
-    └── transcripts/<stem>.{json,txt,rttm,diarized.json,diarized.txt,brief.json,speakers.json,summary.md}
+    └── transcripts/<stem>.{json,txt,rttm,diarized.json,diarized.txt,brief.json,speakers.json,summary.md,summary.meta.json}
 ~/.local/share/earshot/          # sync.log, backup.log, state.json
 ~/.config/earshot/env            # your settings
 ```
@@ -221,6 +270,8 @@ Everything earshot writes is mode 600 in 700 directories.
   next ones.
 - **Suggested titles rarely include names**, because introductions happen before the recorder
   starts. Matching recordings to calendar events would fix that.
+- **Full summaries run from the command line** for now. A Generate button on the review page,
+  with clickable citations, is next.
 - **Linux or WSL with NVIDIA only.** Apple Silicon support would need a different speech stack.
 - **earshot depends on Plaud's developer API** and on the formats it serves today: MP3, Ogg Opus,
   and bare Opus packets.

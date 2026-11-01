@@ -174,7 +174,7 @@ discovered → downloaded → verified → archived → backed_up → submitted 
     ├── audio/<YYYY-MM-DD_HHMM>_<id>.{mp3,ogg}
     ├── raw/<stem>.opus                  # raw-Opus originals
     ├── quarantine/
-    └── transcripts/<stem>.{json,txt,rttm,diarized.json,diarized.txt,speakers.json}
+    └── transcripts/<stem>.{json,txt,rttm,diarized.json,diarized.txt,speakers.json,brief.json,summary.md,summary.meta.json}
 ```
 
 ---
@@ -182,7 +182,7 @@ discovered → downloaded → verified → archived → backed_up → submitted 
 ### 4.1 Review page (built 2026-10-27)
 
 `python3 -I review/server.py` serves http://localhost:8790/, reachable from the Windows browser.
-It's standard library only, and listens on 127.0.0.1 only.
+It's standard library only, and listens on 127.0.0.1 unless remote access is configured.
 
 - **Listen.** The player sits next to the diarized transcript. Clicking a line seeks to it, and
   the current line follows playback.
@@ -201,13 +201,115 @@ It's standard library only, and listens on 127.0.0.1 only.
 - **Download.** A transcript with speaker names is available for summaries.
 - **Tabs.** Each recording has Transcript and Summary tabs. The Summary tab shows
   `<stem>.summary.md` through a small Markdown renderer that builds text nodes only, so a
-  summary can never inject HTML. A "generate summary" button with predefined templates is
-  planned.
+  summary can never inject HTML. `summarize.py` writes it (§4.2); a Generate button is next.
 - **Audio.** Plaud's Ogg files carry a second, unidentified metadata stream, so they play through
   an audio-only stream copy in `plaud/cache/` (0600). The originals are never touched.
-- **Request checks.** A localhost `Host` header is required, which blocks DNS rebinding. Writes
-  also need the `X-Earshot` header, a JSON body, and a same-origin `Origin`. All transcript text
-  is rendered as text, never as HTML.
+- **Request checks.** A localhost (or configured) `Host` header is required, which blocks DNS
+  rebinding. Writes also need the `X-Earshot` header, a JSON body, and a same-origin `Origin`.
+  All transcript text is rendered as text, never as HTML.
+- **Remote access (2026-11-01).** Opt-in, for a phone on WireGuard (router → Windows portproxy →
+  WSL). Non-loopback clients must come from an allowed network and hold a session cookie: an
+  HMAC of `EARSHOT_REVIEW_TOKEN`, set by opening `/?token=…` once (HttpOnly, SameSite=Strict, one
+  year; the response redirects to `/`). The token is compared in constant time. Under WSL2 every
+  forwarded connection arrives from the default gateway (`--allow-from gateway`), which keeps
+  Docker containers out but can't tell LAN from VPN clients. The Windows firewall rule, scoped
+  to the VPN subnet, does that; the token covers a mistake there. The server refuses to listen
+  beyond loopback without allowed networks, hosts and a token of 20+ characters.
+
+### 4.2 Full summaries (built 2026-11-01)
+
+`summarize.py <id>` drafts the notes you work from before copying anything into memoize. It runs
+only when asked. The daily sync never runs it, and the brief stays the triage step.
+
+- **Templates.** There is one per category in `templates/`: `interview`, `one-on-one` and
+  `group-meeting`. Family recordings have none, because the brief covers them (they're a median
+  of 2 minutes). `{owner}` stands for `EARSHOT_OWNER`. A file of the same name in
+  `~/.config/earshot/templates/` overrides one, so a private version, such as a role rubric,
+  stays out of the repo. Rules that apply to every template live in `summarize.py`:
+  - every bullet cites a transcript time
+  - a decision must be explicit
+  - an action item must be something someone said would be done
+  - an owner is named only when it's clear
+  - likely mis-transcriptions are flagged
+- **Interviews record evidence, not verdicts.** The template forbids rating or ranking the
+  candidate and recommending for or against hiring. It also leaves out personal characteristics
+  that come up in small talk.
+- **Input.** The diarized transcript with a `[mm:ss]` time on every line, plus:
+  - the speaker names from the review page. Owners need them, so the script warns when none are set
+  - talk times
+  - the recording's date and title
+
+  The instructions come after the transcript.
+- **Output.**
+  - `<stem>.summary.md` is what the Summary tab shows. The script writes the title, date, length
+    and participants itself, not the model, and adds the action-item checkboxes if the model
+    leaves them out.
+  - `<stem>.summary.meta.json` holds the model, the template and its hash, tokens and time. It
+    also holds checks: citations that match a transcript line, citations past the end, bullets
+    without a citation, and missing sections.
+  - A previous summary is kept as `.summary.prev.md`.
+  - `--out DIR` writes somewhere else, for comparing models.
+- **Model.** Local only, using brief.py's check. The default is `qwen3.8:27b-128k` with reasoning
+  on (`EARSHOT_SUMMARY_MODEL`, `--no-think`). It gets no tools, so the agentic risks in the
+  2026-10-26 Qwen audit don't apply. The transcripts reach llm-server whichever model runs.
+- **Context.** Up to 64k tokens, with a 32k reasoning budget. The longest recording so far
+  (86 minutes, 18k prompt tokens) used 39k.
+
+**Bake-off, 2026-11-01.** The benchmark was a 20-minute 1:1 with named speakers. Each draft was
+scored against the points in a hand-checked summary, and checked against the transcript. Rounds
+1–3 used an unwritten list of about 31 points; round 4 used a written 32-point checklist (kept
+privately with the drafts), and two earlier drafts were rescored against it, shown in brackets.
+
+| Model | Time | Points covered | Errors of fact | Overreach | Citations on a real line |
+|---|---|---|---|---|---|
+| gemma4:31b | 57 s | ~19 | 1 | 1 | 63/70 |
+| qwen3.8:27b | 53 s | ~19 | 2 | 3 | 55/55 |
+| gemma4:31b, reasoning | 124 s | ~21 (23.5/32) | 1 | 0–1 | 84/85 |
+| qwen3.8:27b, reasoning | 142 s | ~31 | 1 | 3 | 137/137 |
+| qwen3.8:27b, reasoning, tightened rules | 166 s | ~31 (32/32) | 0 | 1 | 115/115 |
+| muse-glimmer:30b, no reasoning | — | — | — | — | — |
+| *Round 4: bullet budget, mis-transcriptions capped at 10* | | | | | |
+| qwen3.8:27b, reasoning | 148 s | 27.5/32 | 2 | 3 | 93/93 |
+| gemma4:31b, reasoning | 131 s | 23.5/32 | 1 | 0 | 65/66 |
+| muse-glimmer:30b, reasoning | 473 s | 23/32 | 1 | 0 | 61/63 |
+
+- **Overreach** means an owner nobody stated, a proposal recorded as a decision, or an invented
+  action item. The tightened rules fixed most of it: decisions must be explicit, open issues go
+  to follow-ups, and paraphrase is the default.
+- **Citations** sometimes point at the neighbouring line, a few seconds off.
+- **muse-glimmer** ignores `think: false`: it spent 6,000 tokens on reasoning that Ollama
+  discarded, and returned nothing. With reasoning on it works, but it's 3.5x slower than the
+  others (62k characters of reasoning), missed a headline number, found one action item, and writes
+  in fragments. Not worth pursuing.
+- **Mis-transcriptions.** Without a hint, no model worked out the benchmark's main mis-heard
+  term. The round 1–3 rules happened to use it as their example, which is why those drafts got
+  it; the rules now use a generic one.
+
+**At scale, with reasoning:**
+- An 81-minute interview took 246 s (gemma4: 138 s).
+- An 86-minute group meeting took 363 s.
+
+**Length.** Uncapped, qwen3.8 wrote about 12 KB for the 20-minute 1:1 (the reference was 6.6
+KB), 23 KB for the interview (gemma4: 7 KB) and 31 KB for the group meeting, including 67
+mis-transcription bullets. Round 4 tried a bullet budget for each template's main section (about
+1.5 a minute, 10 to 40) and capped the mis-transcription list at 10:
+
+| qwen3.8, reasoning | Before | After | Main section | Mis-transcriptions |
+|---|---|---|---|---|
+| 20-min 1:1 | 12.5 KB | 10.7 KB | 8.4 → 6.5 KB (77 → 31 bullets, budget 29) | 0.9 → 0.8 KB |
+| 81-min interview | 23.3 KB | 16.4 KB | 11.8 → 8.1 KB (56 → 43, budget 40) | 1.9 → 0.8 KB |
+| 86-min group meeting | 30.7 KB | 21.1 KB | 20.3 → 14.7 KB (119 → 90, budget 40) | 3.9 → 0.8 KB |
+
+The mis-transcription cap is a clear win. The budget is a trade-off: on the benchmark it cost
+4.5 points (32 → 27.5; four secondary points were merged away) for 1.9 KB, and qwen3.8 ignored it on the group meeting. One run each, so some of that is
+run-to-run variation; overreach went from 1 to 3, which round 2 also saw without a budget.
+
+**Decision:** keep the mis-transcription cap and drop the budget. A point a draft leaves out is
+invisible unless you reread the transcript, while extra length only costs skimming, and drafts
+are read to excerpt from. If long drafts turn out to be unusable, the budget can come back.
+
+**Next (P2).** A Generate button on the Summary tab, running one job at a time and showing
+progress. `[mm:ss]` citations become clickable and move the player there.
 
 ## 5. Alerts
 
@@ -273,6 +375,8 @@ whatever process runs next.
 - **Secrets:**
   - `~/.plaud/tokens.json` is managed by the CLI. earshot only reads the access token.
   - `SLACK_WEBHOOK_URL` comes from `~/.bashrc_env`.
+  - `EARSHOT_REVIEW_TOKEN` (remote access to the review page) lives in `~/.config/earshot/env`
+    (0600). It's never logged; `--link` prints it on request.
   - Neither, nor the presigned URLs, ever goes to logs or stdout.
 - **Downloads are untrusted data.** They're sniffed by bytes, decoded by ffmpeg only, kept in
   their own directories and never executed. Any Python that reads them runs with `-I`.

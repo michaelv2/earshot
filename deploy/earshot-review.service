@@ -1,13 +1,15 @@
-# Always-on review page for earshot (http://localhost:8790/, 127.0.0.1 only).
+# Always-on review page for earshot (http://localhost:8790/; 127.0.0.1 only unless configured).
 # Install: ln -s ~/projects/earshot/deploy/earshot-review.service ~/.config/systemd/user/
 #          systemctl --user daemon-reload && systemctl --user enable --now earshot-review
-# The server rejects non-localhost Host headers and cross-site writes (review/server.py).
+# The server rejects unexpected Host headers and cross-site writes (review/server.py). Remote access
+# (e.g. over WireGuard) comes from EARSHOT_REVIEW_* in ~/.config/earshot/env; see the README.
 [Unit]
-Description=earshot review page (localhost:8790)
+Description=earshot review page (port 8790)
 
 [Service]
 Type=simple
 WorkingDirectory=%h/projects/earshot
+EnvironmentFile=-%h/.config/earshot/env
 ExecStart=/usr/bin/python3 -I %h/projects/earshot/review/server.py --port 8790
 Restart=on-failure
 RestartSec=5
