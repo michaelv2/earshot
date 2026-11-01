@@ -98,12 +98,17 @@ def template_path(name: str) -> Path:
     sys.exit(f"no template {name!r}; --templates lists them")
 
 
-def list_templates() -> None:
+def templates() -> dict[str, Path]:
+    """Template name -> file. The review page uses this too."""
     found = {}
     for d in reversed(TEMPLATE_DIRS):  # the override folder last, so it wins
         for p in sorted(d.glob("*.md")) if d.is_dir() else []:
             found[p.stem] = p
-    for name, p in sorted(found.items()):
+    return found
+
+
+def list_templates() -> None:
+    for name, p in sorted(templates().items()):
         cats = ", ".join(c for c, t in DEFAULT_TEMPLATE.items() if t == name)
         log(f"{name:16} {p}{f'   (default for {cats})' if cats else ''}")
 

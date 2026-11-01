@@ -206,11 +206,15 @@ Traffic is plain HTTP between the router and this machine; the VPN encrypts the 
   `folders.csv`, and blank means it's still in the inbox.
 - **Discard** (`D`) hides a recording and marks it as not worth a summary. The audio is kept,
   and **Restore** brings it back.
-- **Summaries.** Run `python3 -I summarize.py <id>` to draft one; it appears on the Summary tab.
+- **Summaries.** On the Summary tab, pick a template (it defaults from the category) and press
+  **Generate summary**. It drafts in the background; keep working, and a toast says when it's
+  ready. `python3 -I summarize.py <id>` does the same from the command line.
   - **Name the speakers first,** including yourself, or action items can't have owners.
-  - **It takes 3–6 minutes** for an hour-long recording.
-  - **Check before you keep anything.** Every bullet ends with the `[mm:ss]` it came from.
-  - **Regenerating** keeps the previous draft as `<stem>.summary.prev.md`.
+  - **It takes 2–4 minutes** for a 20-minute recording and 4–7 for an hour or more. One summary
+    runs at a time, across all recordings and devices.
+  - **Check before you keep anything.** Every bullet ends with the `[mm:ss]` it came from; click
+    one to play from there.
+  - **Regenerating** keeps the previous draft as `<stem>.summary.prev.md`, one level back.
   - **Templates** are in `templates/`. To change one privately, copy it to
     `~/.config/earshot/templates/` and edit the copy.
 
@@ -270,8 +274,7 @@ Everything earshot writes is mode 600 in 700 directories.
   next ones.
 - **Suggested titles rarely include names**, because introductions happen before the recorder
   starts. Matching recordings to calendar events would fix that.
-- **Full summaries run from the command line** for now. A Generate button on the review page,
-  with clickable citations, is next.
+- **A summary job can't be cancelled** from the page, and restarting the review page stops it.
 - **Linux or WSL with NVIDIA only.** Apple Silicon support would need a different speech stack.
 - **earshot depends on Plaud's developer API** and on the formats it serves today: MP3, Ogg Opus,
   and bare Opus packets.

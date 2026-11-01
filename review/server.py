@@ -7,7 +7,8 @@ Serves on 127.0.0.1 by default, from the files under ~/recordings. Standard libr
                        copy in plaud/cache/, because Plaud adds a metadata stream browsers may reject
   plaud/transcripts/   reads <stem>.diarized.json, or <stem>.json before diarization, plus
                        <stem>.brief.json (brief.py) and <stem>.summary.md; speaker names are saved
-                       to <stem>.speakers.json
+                       to <stem>.speakers.json. The Summary tab's Generate button runs summarize.py,
+                       one job at a time
 
 Requests must carry an expected Host header (localhost, or an --allow-host name; blocks DNS
 rebinding), and writes need the X-Earshot header, which a cross-site form or fetch can't send
@@ -39,6 +40,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from collections import defaultdict
 from datetime import date
 from http import HTTPStatus
@@ -54,7 +56,8 @@ def set_root(root: Path) -> None:
     AUDIO, TRANSCRIPTS, CACHE = (ROOT / "plaud" / d for d in ("audio", "transcripts", "cache"))
 
 
-set_root(Path.home() / "recordings")
+DEFAULT_ROOT = Path.home() / "recordings"  # where summarize.py reads and writes
+set_root(DEFAULT_ROOT)
 # Categories match brief.py's; "unfiled" means no brief yet, "discard" hides a recording.
 FOLDERS = ["interview", "1:1 meeting", "group meeting", "family", "unfiled", "discard"]
 PAGE = Path(__file__).with_name("index.html")
@@ -194,6 +197,73 @@ def hms(t: float) -> str:
     return f"{int(t // 3600):02d}:{int(t % 3600 // 60):02d}:{int(t % 60):02d}"
 
 
+# --- Summary jobs ----------------------------------------------------------------------------------
+# Generate runs summarize.py in the background: minutes of llm-server time, so one job at a time,
+# from any recording. The current or last job is kept in memory only; restarting the service stops
+# a running one.
+
+REPO = Path(__file__).resolve().parent.parent
+job_lock = threading.Lock()
+JOB: dict = {}
+
+
+def summarizer():
+    """summarize.py as a module, for its templates, defaults and model (one source of truth)."""
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    import summarize
+    return summarize
+
+
+def summary_options(row: dict, status: str) -> dict:
+    s = summarizer()
+    why = ("summaries only run on ~/recordings, not with --root" if ROOT != DEFAULT_ROOT
+           else "needs speaker labels first; diarization hasn't finished" if status != "diarized" else "")
+    return {"templates": sorted(s.templates()), "default": s.DEFAULT_TEMPLATE.get(row.get("folder", "")),
+            "model": s.MODEL, "unavailable": why}
+
+
+def job_view() -> dict | None:
+    with job_lock:
+        j = dict(JOB)
+    if not j:
+        return None
+    j["elapsed"] = round((j.pop("finished", None) or time.time()) - j.pop("started"))
+    return j
+
+
+def start_job(rid: str, title: str, template: str) -> dict | None:
+    """Start a summary job, or return None if one is already running."""
+    with job_lock:
+        if JOB.get("state") == "running":
+            return None
+        JOB.clear()
+        JOB.update(id=rid, title=title, template=template, model=summarizer().MODEL, state="running",
+                   message="", started=time.time())
+    threading.Thread(target=run_job, args=(rid, template), daemon=True).start()
+    return job_view()
+
+
+def last_line(text: str) -> str:
+    return (text.strip().splitlines() or [""])[-1]
+
+
+def run_job(rid: str, template: str) -> None:
+    env = {k: v for k, v in os.environ.items() if k != "EARSHOT_REVIEW_TOKEN"}
+    try:
+        r = subprocess.run([sys.executable, "-I", str(REPO / "summarize.py"), rid, "--template", template],
+                           env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=2400)
+        ok = r.returncode == 0
+        msg = last_line(r.stdout) if ok else last_line(r.stderr) or last_line(r.stdout) or f"exit status {r.returncode}"
+    except subprocess.TimeoutExpired:
+        ok, msg = False, "gave up after 40 minutes"
+    except OSError as e:
+        ok, msg = False, f"couldn't run summarize.py: {e}"
+    print(f"summary job {rid}: {'done' if ok else 'failed'}", flush=True)
+    with job_lock:
+        JOB.update(state="done" if ok else "failed", message=msg[:300], finished=time.time())
+
+
 # --- HTTP ------------------------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
@@ -230,6 +300,28 @@ class Handler(BaseHTTPRequestHandler):
         if peer.is_loopback or self._session_ok():
             return True
         return self._deny(HTTPStatus.UNAUTHORIZED, "no session: open the page once with ?token=")
+
+    def _write_ok(self) -> bool:
+        """Writes also need the X-Earshot header, a JSON body and, if the browser sent one, our Origin."""
+        if not self._allowed():
+            return False
+        origin = self.headers.get("Origin")
+        if (self.headers.get("X-Earshot") != "1"
+                or not self.headers.get("Content-Type", "").startswith("application/json")
+                or (origin and urlsplit(origin).netloc not in self.server.allowed_hosts)):
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return False
+        return True
+
+    def _read_json(self):
+        try:
+            body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 65536)) or b"{}")
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            self.send_error(400, "bad JSON")
+            return None
+        return body
 
     def _session_ok(self) -> bool:
         jar = SimpleCookie()
@@ -275,6 +367,8 @@ class Handler(BaseHTTPRequestHandler):
                    "connect-src 'self'; media-src 'self'; img-src 'self' data:; form-action 'none'; "
                    "frame-ancestors 'none'; base-uri 'none'")
             return self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8", {"Content-Security-Policy": csp})
+        if parts == ["api", "summary-job"]:
+            return self._json({"job": job_view()})
         if parts == ["api", "recordings"]:
             index = stems()
             rows = read_csv()[1]
@@ -296,7 +390,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts[3:]:
                 return self.send_error(404)
             return self._json({**summary(row, {row["id"]: found}), "speakers": speakers(utts, names),
-                               "utterances": utts, "summary": load_summary(stem), "brief_full": load_brief(stem)})
+                               "utterances": utts, "summary": load_summary(stem), "brief_full": load_brief(stem),
+                               "summary_options": summary_options(row, status)})
         if len(parts) == 2 and parts[0] == "audio":
             row, found = self._recording(parts[1])
             if not row or not found:
@@ -343,24 +438,39 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass  # the player seeks by dropping connections
 
-    def do_PATCH(self):
-        if not self._allowed():
+    def do_POST(self):
+        """POST /api/recordings/<id>/summary {"template": name}: start drafting a summary."""
+        if not self._write_ok():
             return
-        origin = self.headers.get("Origin")
-        if (self.headers.get("X-Earshot") != "1"
-                or not self.headers.get("Content-Type", "").startswith("application/json")
-                or (origin and urlsplit(origin).netloc not in self.server.allowed_hosts)):
-            return self.send_error(HTTPStatus.FORBIDDEN)
+        parts = urlsplit(self.path).path.strip("/").split("/")
+        if len(parts) != 4 or parts[:2] != ["api", "recordings"] or parts[3] != "summary":
+            return self.send_error(404)
+        row, found = self._recording(parts[2])
+        if not row or not found:
+            return self.send_error(404)
+        if (body := self._read_json()) is None:
+            return
+        opts = summary_options(row, load_transcript(found[0])[0])
+        if opts["unavailable"]:
+            return self.send_error(409, opts["unavailable"])
+        template = body.get("template") or opts["default"]
+        if template not in opts["templates"]:
+            return self.send_error(400, "template")
+        if (job := start_job(row["id"], row.get("title") or "", template)) is None:
+            return self._json({"error": "busy", "job": job_view()}, 409)
+        self._json({"job": job}, 202)
+
+    def do_PATCH(self):
+        if not self._write_ok():
+            return
         parts = urlsplit(self.path).path.strip("/").split("/")
         if len(parts) != 3 or parts[:2] != ["api", "recordings"]:
             return self.send_error(404)
         row, found = self._recording(parts[2])
         if not row or not found:
             return self.send_error(404)
-        try:
-            body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 65536)))
-        except ValueError:
-            return self.send_error(400, "bad JSON")
+        if (body := self._read_json()) is None:
+            return
 
         changes = {}
         if "title" in body:

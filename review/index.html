@@ -90,6 +90,11 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: v
 .md li.task { list-style: none; margin-left: -20px; }
 .md li.task input { margin: 0 6px 0 0; vertical-align: -1px; }
 .md code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.cite { font: inherit; font-variant-numeric: tabular-nums; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.cite:hover { text-decoration-style: solid; }
+.sumbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0 4px; }
+.note.warn { color: var(--warn); }
+.btn:disabled { opacity: .5; cursor: default; border-color: var(--line); }
 .has-sum { color: var(--accent); }
 .item .t.sug { font-style: italic; font-weight: 500; color: var(--muted); }
 .cat { font-size: 11px; padding: 0 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
@@ -156,7 +161,8 @@ const visible = (r, f) => f === "inbox" ? !r.archived && r.folder !== "discard"
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
 const STATUS = { diarized: "Diarized", transcribed: "Transcribed, no speakers yet", none: "Not transcribed", "no audio": "No audio" };
 
-let state = { folders: [], recs: [], filter: "inbox", q: "", sel: null, detail: null, follow: true, tab: "transcript" };
+let state = { folders: [], recs: [], filter: "inbox", q: "", sel: null, detail: null, follow: true, tab: "transcript",
+  job: null, jobAt: 0, tpl: {} };
 try { state.tab = localStorage.getItem("review.tab") || state.tab; } catch {}
 const audio = new Audio(); audio.preload = "metadata";
 let sampleStop = null, nowIdx = -1;
@@ -212,7 +218,7 @@ async function setArchived(id, on, offerUndo = true) {
 let toastTimer = null;
 function toast(msg, undo) {
   const t = $("#toast");
-  t.replaceChildren(el("span", { text: msg }), undo ? el("button", { text: "Undo", onclick: () => { t.hidden = true; undo(); } }) : null);
+  t.replaceChildren(...[el("span", { text: msg }), undo ? el("button", { text: "Undo", onclick: () => { t.hidden = true; undo(); } }) : null].filter(Boolean));
   t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 6000);
 }
 $("#search").addEventListener("input", (e) => { state.q = e.target.value; renderList(); });
@@ -314,17 +320,28 @@ function renderDetail() {
     el("span", { class: "who", style: u.speaker ? `color:${colors[u.speaker]}` : "", text: u.speaker ? names[u.speaker] : "" }),
     el("span", { class: "tx", text: u.text }))));
 
+  // The summary panel: a Generate bar, then the draft. A finished job swaps the draft in place, so
+  // playback and the transcript are left alone.
+  const sumBar = el("div", { class: "sumbar" }), sumBody = el("div");
+  const sumTabText = () => d.summary ? "Summary" : "Summary (none)";
+  const showSummary = () => sumBody.replaceChildren(d.summary ? renderMarkdown(d.summary) : el("p", { class: "note", text: "No summary yet." }));
+  showSummary();
   const panels = {
     transcript: el("div", { id: "p-transcript" },
       el("h2", { text: "Speakers" }), ...spk,
       el("h2", { text: "Transcript" }),
       d.utterances.length ? utts : el("p", { class: "note", text: "No transcript yet." })),
-    summary: el("div", { id: "p-summary" },
-      d.summary ? renderMarkdown(d.summary) : el("p", { class: "note", text: "No summary yet." })),
+    summary: el("div", { id: "p-summary" }, sumBar, sumBody),
   };
   const tabBar = el("div", { class: "dtabs", role: "tablist" }, ...Object.keys(panels).map((k) =>
-    el("button", { role: "tab", "data-tab": k, text: k === "summary" && !d.summary ? "Summary (none)" : k[0].toUpperCase() + k.slice(1),
-      onclick: () => showTab(k) })));
+    el("button", { role: "tab", "data-tab": k, text: k === "summary" ? sumTabText() : cap(k), onclick: () => showTab(k) })));
+  state.renderSumBar = () => renderSumBar(d, sumBar);
+  state.summaryLoaded = (md) => {
+    d.summary = md; showSummary();
+    tabBar.querySelector('[data-tab="summary"]').textContent = sumTabText();
+    state.renderSumBar();
+  };
+  state.renderSumBar();
   const showTab = (k) => {
     state.tab = k; try { localStorage.setItem("review.tab", k); } catch {}
     for (const [name, panel] of Object.entries(panels)) panel.hidden = name !== k;
@@ -348,15 +365,97 @@ function renderDetail() {
   showTab(panels[state.tab] ? state.tab : "transcript");
 }
 
+// ---------- summary jobs ----------
+// Generate asks the server to draft a summary with summarize.py: one job at a time, a few minutes
+// each. The page polls the job every 3 s while one runs and every 15 s otherwise, so a job started
+// on another device shows up too.
+let jobTimer = null;
+function renderSumBar(d, bar) {
+  const o = d.summary_options, j = state.job;
+  state.tickJob = null;
+  if (!o) return bar.replaceChildren();
+  const running = j?.state === "running", mine = j?.id === d.id;
+  const chosen = state.tpl[d.id] || o.default || "";
+  const pick = el("select", { "aria-label": "Summary template", title: "Template",
+    onchange: (e) => { state.tpl[d.id] = e.target.value; state.renderSumBar(); } },
+    chosen ? null : el("option", { value: "", text: "Choose a template…" }),
+    ...o.templates.map((t) => el("option", { value: t, text: t })));
+  pick.value = chosen;
+  const go = el("button", { class: "btn", text: d.summary ? "Regenerate" : "Generate summary",
+    title: `Draft with ${o.model} from the chosen template`, onclick: () => generate(d, pick.value) });
+  go.disabled = running || !!o.unavailable || !chosen;
+  let status = null;
+  if (o.unavailable) status = el("span", { class: "note", text: cap(o.unavailable) + "." });
+  else if (running && mine) {
+    const est = d.duration_min < 45 ? "2–4" : "4–7";  // 2026-11-01 timings: 20 min took 2.5–3 min; 80+ min, 3.5–6
+    status = el("span", { class: "note" });
+    state.tickJob = () => status.textContent = `Drafting with ${j.model}… ${hms(j.elapsed + (Date.now() - state.jobAt) / 1000)} `
+      + `(usually ${est} min). You can keep working.`;
+    state.tickJob();
+  }
+  else if (running) status = el("span", { class: "note", text: `Busy drafting “${j.title || j.id}”; one summary at a time.` });
+  else if (mine && j.state === "failed") status = el("span", { class: "note warn", text: `Last attempt failed: ${j.message}` });
+  else if (d.speakers.length && !d.speakers.some((x) => x.name))
+    status = el("span", { class: "note", text: "Tip: name the speakers first, so action items get owners." });
+  bar.replaceChildren(...[pick, go, status].filter(Boolean));
+}
+async function generate(d, template) {
+  if (d.summary && !confirm("Replace this summary with a new draft? The current one is kept as the previous version, one level back.")) return;
+  try {
+    const r = await api(`/api/recordings/${d.id}/summary`, { method: "POST", body: JSON.stringify({ template }) });
+    state.job = r.job; state.jobAt = Date.now();
+  } catch (e) {
+    toast(e.message.startsWith("409") ? "Another summary is being drafted; one at a time." : "Couldn't start the summary.");
+  }
+  pollJob();
+}
+async function pollJob() {
+  clearTimeout(jobTimer); jobTimer = null;
+  let j;
+  try { j = (await api("/api/summary-job")).job; } catch { return; }
+  const prev = state.job;
+  state.job = j; state.jobAt = Date.now();
+  if (prev?.state === "running" && j?.id === prev.id && j.state !== "running") jobFinished(j);
+  state.renderSumBar?.();
+  if (j?.state === "running") jobTimer = setTimeout(pollJob, 3000);
+}
+async function jobFinished(j) {
+  const here = state.detail?.id === j.id, name = j.title || "the recording";
+  if (j.state !== "done") return toast(`Summary of ${name} failed.`);
+  const r = state.recs.find((x) => x.id === j.id);
+  if (r) { r.has_summary = true; renderList(); }
+  if (here) {
+    const d = await api(`/api/recordings/${j.id}`);
+    if (state.detail?.id === j.id) state.summaryLoaded(d.summary);
+  }
+  toast(here ? "Summary ready." : `Summary ready: ${name}.`);
+}
+setInterval(() => state.tickJob?.(), 1000);
+
 // ---------- summary markdown ----------
 // A small subset (headings, paragraphs, nested and task lists, bold, italic, code), built as DOM
-// nodes with text content only, so nothing in a summary is ever interpreted as HTML.
+// nodes with text content only, so nothing in a summary is ever interpreted as HTML. Transcript
+// times in square brackets, e.g. [12:34, 15:02], become buttons that play from that point.
+function cites(group) {
+  const span = el("span", {}, "[");
+  const re = /(?:(\d+):)?(\d{1,2}):(\d{2})/g;
+  let last = 0, m;
+  while ((m = re.exec(group))) {
+    if (m.index > last) span.append(group.slice(last, m.index));
+    const t = (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]);
+    span.append(el("button", { class: "cite", text: m[0], title: "Play from here", onclick: () => { audio.currentTime = t; audio.play(); } }));
+    last = m.index + m[0].length;
+  }
+  span.append(group.slice(last), "]");
+  return span;
+}
 function inline(text) {
-  const out = [], re = /\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*/g;
+  const out = [], re = /\*\*([^*]+)\*\*|`([^`]+)`|\*([^*\s][^*]*)\*|\[(\d[0-9:,;\s–-]*)\]/g;
   let last = 0, m;
   while ((m = re.exec(text))) {
     if (m.index > last) out.push(text.slice(last, m.index));
-    out.push(m[1] != null ? el("strong", { text: m[1] }) : m[2] != null ? el("code", { text: m[2] }) : el("em", { text: m[3] }));
+    out.push(m[1] != null ? el("strong", { text: m[1] }) : m[2] != null ? el("code", { text: m[2] })
+      : m[3] != null ? el("em", { text: m[3] }) : cites(m[4]));
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
@@ -439,7 +538,8 @@ loadList().then(() => {
   if (tab === "summary" || tab === "transcript") state.tab = tab;
   if (id && state.recs.some((r) => r.id === id)) select(id);
 });
-setInterval(() => loadList().catch(() => {}), 15000);
+pollJob();
+setInterval(() => { loadList().catch(() => {}); if (!jobTimer) pollJob(); }, 15000);
 </script>
 </body>
 </html>

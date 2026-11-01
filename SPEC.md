@@ -201,7 +201,8 @@ It's standard library only, and listens on 127.0.0.1 unless remote access is con
 - **Download.** A transcript with speaker names is available for summaries.
 - **Tabs.** Each recording has Transcript and Summary tabs. The Summary tab shows
   `<stem>.summary.md` through a small Markdown renderer that builds text nodes only, so a
-  summary can never inject HTML. `summarize.py` writes it (§4.2); a Generate button is next.
+  summary can never inject HTML. `summarize.py` writes it (§4.2), from the command line or the
+  tab's Generate button. `[mm:ss]` citations render as buttons that move the player there.
 - **Audio.** Plaud's Ogg files carry a second, unidentified metadata stream, so they play through
   an audio-only stream copy in `plaud/cache/` (0600). The originals are never touched.
 - **Request checks.** A localhost (or configured) `Host` header is required, which blocks DNS
@@ -308,8 +309,17 @@ run-to-run variation; overreach went from 1 to 3, which round 2 also saw without
 invisible unless you reread the transcript, while extra length only costs skimming, and drafts
 are read to excerpt from. If long drafts turn out to be unusable, the budget can come back.
 
-**Next (P2).** A Generate button on the Summary tab, running one job at a time and showing
-progress. `[mm:ss]` citations become clickable and move the player there.
+**Generate button (built 2026-11-01).** `POST /api/recordings/<id>/summary {"template"}`, with
+the same write checks as edits, starts `summarize.py` in a background thread. One job runs at a
+time across all recordings, because each takes minutes of llm-server time; a second start gets
+409. `GET /api/summary-job` reports the current or last job (state, elapsed, last output line).
+The page polls it every 3 s while a job runs and every 15 s otherwise, so a job started on
+another device shows up. A finished draft replaces the panel in place, leaving playback alone.
+Jobs live in memory: restarting the service stops a running one. The child process doesn't get
+`EARSHOT_REVIEW_TOKEN`. Generation is off with `--root`, since `summarize.py` only uses
+`~/recordings`.
+
+**Next (P3).** A memoize-notes template, and editing a draft on the page.
 
 ## 5. Alerts
 
