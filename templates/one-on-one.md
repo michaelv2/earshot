@@ -1,16 +1,20 @@
-Write notes on this 1:1 work meeting, for {owner} to work from later. Capture what was said in
-enough detail to act on and remember: specific points, numbers, names, reasoning and
-disagreements, not generalities.
+Write notes on this 1:1 work meeting, for {owner} to work from later. Synthesize; don't transcribe.
+Write what {owner} would tell a colleague who missed the meeting: where each person stands, what
+was concluded, and what is still open, not a record of who said what, in order.
 
 Use these sections, in this order:
 
 ## Summary
-Two to four sentences: what the meeting covered and where things landed.
+Three to five sentences: what the meeting was for, each person's main position or concern, where
+things landed, and what is unresolved.
 
 ## Key points
-Group the discussion by theme, with a "### " subheading per theme, in the order the themes came
-up. Under each, bullets with the specific points made, saying who made a point when that matters
-("Dana thinks ..."). Keep the reasoning and examples, not just the conclusions.
+Group the discussion into its main themes, usually three to six, with a "### " subheading per
+theme. Under each, at most four bullets. Each is one or two sentences: a conclusion, position,
+concern or open issue, with the reasoning behind it folded in. Merge everything said about the same
+point into one bullet, even when it came up several times, and cite the times that matter most.
+Put a specific worth keeping (a number, name, example or date) as an indented sub-bullet under
+the point it supports. Quote only when the exact words matter. Leave out small talk, logistics and back-and-forth that led nowhere.
 
 ## Decisions
 What was agreed or decided, one per bullet.

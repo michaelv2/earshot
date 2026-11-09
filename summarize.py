@@ -258,11 +258,21 @@ def main() -> None:
 
     check_model(args.model)
     prompt, people = build_prompt(stem, title, data, names, template)
-    try:
-        raw, stats = generate(prompt, args.model, args.think)
-    except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
-        sys.exit(f"{stem}: FAILED {type(e).__name__}: {str(e)[:200]}")
-    body = clean(raw)
+    # With reasoning on, the model now and then drafts the notes in its reasoning and then answers with
+    # next to nothing (2 of 8 runs in a 2026-11-09 test). Try once more rather than save an empty summary.
+    for attempt in (1, 2):
+        try:
+            raw, stats = generate(prompt, args.model, args.think)
+        except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
+            sys.exit(f"{stem}: FAILED {type(e).__name__}: {str(e)[:200]}")
+        body = clean(raw)
+        if "## " in body and len(body.split()) >= 80:
+            break
+        log(f"{stem}: the model returned no notes ({len(body.split())} words)"
+            + ("; trying once more" if attempt == 1 else ""))
+    else:
+        sys.exit(f"{stem}: FAILED the model returned no notes twice; nothing was saved")
+    stats["attempts"] = attempt
     started = datetime.strptime(stem[:15], "%Y-%m-%d_%H%M")
     head = (f"# {title or f'Recording {started:%d %b %Y, %H:%M}'}\n\n"
             f"{started:%a %d %b %Y, %H:%M} · {data.get('duration', 0) / 60:.0f} min · {', '.join(people)}\n\n"

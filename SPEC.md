@@ -309,6 +309,24 @@ run-to-run variation; overreach went from 1 to 3, which round 2 also saw without
 invisible unless you reread the transcript, while extra length only costs skimming, and drafts
 are read to excerpt from. If long drafts turn out to be unusable, the budget can come back.
 
+**Synthesis (2026-11-09).** In use, meeting drafts read as a line-by-line account rather than
+notes: 72 bullets for a 35-minute 1:1, about two a minute. The templates asked for it ("enough
+detail to act on", "the specific points made"). The one-on-one and group-meeting templates now
+ask for what you'd tell a colleague who missed the meeting: three to six themes, at most four
+bullets each, one or two sentences per bullet, each a position, conclusion or open issue with
+repeats merged and specifics as sub-bullets. The interview template is unchanged, since
+candidates are compared on specific evidence.
+
+| qwen3.8, reasoning | Before | After |
+|---|---|---|
+| 35-min 1:1 | 72 bullets, 1,944 words | about 1,250 words |
+| 44-min group meeting | 128 bullets, 13 themes, 2,939 words | 65 bullets, 6 themes, 1,622 words |
+
+A first version without the per-theme limit merged bullets but made each one longer, so the
+draft barely shrank. Testing also showed that with reasoning on, qwen3.8 sometimes drafts the
+notes in its reasoning and answers with next to nothing (2 of 8 runs); `summarize.py` now tries
+once more and saves nothing if the second answer is empty too.
+
 **Generate button (built 2026-11-01).** `POST /api/recordings/<id>/summary {"template"}`, with
 the same write checks as edits, starts `summarize.py` in a background thread. One job runs at a
 time across all recordings, because each takes minutes of llm-server time; a second start gets
