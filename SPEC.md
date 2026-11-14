@@ -385,7 +385,9 @@ verified and backed up. The owner deletes those in the Plaud app.
 ## 7. Scheduling
 
 **Current (2026-10-27):** `0 17 * * * sync_cron.sh`, once a day at 5 pm. It runs `sync.py`, an
-interim sync built on the pyarize scripts. The 30-minute schedule below is the target.
+interim sync built on the pyarize scripts. Since 2026-11-13, `30 * * * * sync_cron.sh --retry`
+reruns it hourly, up to 6 times, after a run that ends with failures; otherwise it exits at once.
+The 30-minute schedule below is the target.
 
 
 The sync runs from cron, like the other WSL jobs, every 30 minutes from 07:00 to 23:00. That's

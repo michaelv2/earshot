@@ -13,7 +13,8 @@ requirements. The design notes are in [SPEC.md](SPEC.md).
 
 - **Syncs** new recordings from your Plaud account once a day, using Plaud's official CLI login.
   Each download is checked: the byte count matches, it decodes cleanly, and its length agrees
-  with what Plaud reports. Any recording still without a transcript is retried on the next run.
+  with what Plaud reports. A run that ends with failures is retried hourly, up to 6 times, and
+  any recording still without a transcript is picked up by the next daily run.
 - **Transcribes and labels speakers offline.** It uses faster-whisper large-v3 and pyannote
   `speaker-diarization-community-1`. Both run inside a network namespace with no network access.
 - **Writes a triage brief with a local LLM** (Ollama, `gemma4:31b` by default):
@@ -119,6 +120,7 @@ title. It's plain CSV, so you can edit it by hand.
 6. **Schedule the sync and backup** with `crontab -e`:
    ```
    0 17 * * * ~/projects/earshot/sync_cron.sh
+   30 * * * * ~/projects/earshot/sync_cron.sh --retry
    45 * * * * ~/projects/earshot/backup.sh
    ```
 7. **Install the review page** as a systemd user service. Run

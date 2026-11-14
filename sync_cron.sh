@@ -4,6 +4,7 @@
 # Plaud CLI, and holds a lock so a slow run never overlaps the next one.
 #
 # crontab: 0 17 * * * ~/projects/earshot/sync_cron.sh
+#          30 * * * * ~/projects/earshot/sync_cron.sh --retry   (no-op unless the last run failed)
 # log:     ~/.local/share/earshot/sync.log
 
 if [ -f "$HOME/.bashrc_env" ]; then

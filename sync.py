@@ -19,8 +19,11 @@ node on PATH for the Plaud CLI, and holds a lock so runs never overlap.
 - Each run transcribes every archived recording that has no transcript yet (except discarded
   ones), so a recording whose transcription failed is retried the next day.
 - A failure is alerted once, then remembered in the state file and retried quietly.
+- A run that ends with failures arms up to RETRIES hourly retries: cron runs `sync.py --retry`
+  every hour, and that run exits at once unless retries are armed. A clean run disarms them; if the
+  last retry still fails, Slack says so and the next daily run starts over.
 
-usage: python3 -I sync.py [--dry-run | --safe-to-delete]
+usage: python3 -I sync.py [--dry-run | --safe-to-delete | --retry]
 """
 
 import argparse
@@ -54,6 +57,7 @@ REVIEW_URL = "http://localhost:8790/"
 BACKUP_MOUNT = os.environ.get("EARSHOT_BACKUP_MOUNT", "/mnt/s")
 NAS = Path(os.environ.get("EARSHOT_BACKUP_DIR", "/mnt/s/backup/recordings")) / "plaud"  # written by backup.sh
 DELETE_REMINDER_DAYS = 7
+RETRIES = 6  # hourly retries after a run that ends with failures
 
 
 def log(msg: str) -> None:
@@ -248,7 +252,19 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="check login and list new recordings only")
     ap.add_argument("--safe-to-delete", action="store_true",
                     help="list cloud recordings that are archived and backed up, then exit")
+    ap.add_argument("--retry", action="store_true",
+                    help="hourly cron entry: run only if the last run failed and retries remain")
     args = ap.parse_args()
+    if args.retry:
+        if args.dry_run or args.safe_to_delete:
+            ap.error("--retry can't be combined with --dry-run or --safe-to-delete")
+        state = load_state()
+        left = state.get("retries_left", 0)
+        if left <= 0:
+            return  # nothing to retry; stay out of the log
+        state["retries_left"] = left - 1  # spent even if this run dies early
+        save_state(state)
+        log(f"retry {RETRIES - left + 1} of {RETRIES}")
     log(f"sync start{' (dry run)' if args.dry_run else ''}; Slack webhook "
         f"{'configured' if os.environ.get('SLACK_WEBHOOK_URL') else 'MISSING'}")
     dl_problems, tx_problems = preflight()
@@ -329,6 +345,14 @@ def main() -> None:
             remind = True
             state["last_delete_reminder"] = datetime.now().isoformat(timespec="seconds")
     state["last_run"] = datetime.now().isoformat(timespec="seconds")
+    if not failed:
+        state.pop("retries_left", None)
+    elif not args.retry:
+        state["retries_left"] = RETRIES
+        log(f"  {failed} failure(s); retrying hourly, up to {RETRIES} times")
+    elif not state.get("retries_left"):
+        log(f"  still failing after {RETRIES} hourly retries; next try is the daily run")
+        problems.append(f"still failing after {RETRIES} hourly retries; the daily run will try again")
     save_state(state)
 
     lines = []
