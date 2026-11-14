@@ -232,7 +232,8 @@ def safe_to_delete(cloud: list[dict]) -> list[dict]:
     out = []
     for item in cloud:
         local = [p for p in AUDIO.glob(f"*_{item['id']}.*") if p.suffix in (".ogg", ".mp3")]
-        local += list((AUDIO.parent / "raw").glob(f"*_{item['id']}.opus"))  # raw-Opus originals
+        # Originals kept by plaud_ingest.py: raw Opus, and desktop-app Ogg with its extra stream.
+        local += [p for p in (AUDIO.parent / "raw").glob(f"*_{item['id']}.*") if p.suffix in (".opus", ".ogg")]
         if not local:
             continue
         copies = [NAS / p.parent.name / p.name for p in local]
